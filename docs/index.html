@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mon Programme Fitness</title>
+<meta name="description" content="Mon carnet d'entraînement personnel : séances A, B, C, séries, charges et progression.">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Programme">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preload" href="fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="app.css?v=5.0.0">
+</head>
+<body>
+<div id="sprite" aria-hidden="true"></div>
+<main class="app" id="view" tabindex="-1"></main>
+
+<div class="rest" id="rest" role="timer" aria-live="off">
+  <div class="rest-in"><div class="rest-box">
+    <div class="tm" id="restTm">1:30</div>
+    <div class="lb">Repos<small id="restLb"></small></div>
+    <button type="button" data-rest="-15" aria-label="Retirer 15 secondes">−15</button>
+    <button type="button" data-rest="15" aria-label="Ajouter 15 secondes">+15</button>
+    <button type="button" class="k" data-rest="skip">OK</button>
+  </div></div>
+</div>
+
+<nav class="nav" aria-label="Navigation principale"><div class="nav-in" id="nav"></div></nav>
+
+<noscript><p style="padding:20px">Active JavaScript pour utiliser l'application.</p></noscript>
+<script src="data.js?v=5.0.0"></script>
+<script src="anatomy-data.js?v=5.0.0"></script>
+<script src="app.js?v=5.0.0"></script>
+</body>
+</html>
