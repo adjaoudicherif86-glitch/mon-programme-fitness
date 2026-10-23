@@ -1,11 +1,11 @@
-/* Mon Programme Fitness — V5
-   Stockage : localStorage de ce navigateur (+ export/import JSON).
-   La synchronisation entre appareils (Supabase) arrive à l'étape 2. */
+/* Mon Programme Fitness — V6
+   Stockage : localStorage de ce navigateur (toujours en premier, marche sans réseau)
+   + synchronisation Supabase optionnelle (compte personnel) + export/import JSON. */
 (() => {
 "use strict";
 
-const APP_VERSION = "5.0.0";
-const KEY = "mpf.v5";
+const APP_VERSION = "6.0.0";
+const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
 const $ = (s, r = document) => r.querySelector(s);
@@ -30,14 +30,29 @@ const img = (id, i = 0) => `img/ex/${id}-${i}.jpg`;
 
 /* ───────────── Stockage ───────────── */
 let storageOK = true;
-function blankDB() { return { app: "mon-programme-fitness", version: 5, workouts: [], draft: null, editBuf: null, settings: { autoRest: true } }; }
+function blankDB() {
+  return { app: "mon-programme-fitness", version: 6, workouts: [], weights: [], draft: null, editBuf: null,
+    settings: { autoRest: true, goalKg: 77, startKg: null, profileUpdatedAt: null, profileDirty: false },
+    sync: { url: "", key: "", userId: null, email: null, cursor: {}, lastAt: null, lastError: null } };
+}
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return blankDB();
     const d = JSON.parse(raw);
     const b = blankDB();
-    return { ...b, ...d, settings: { ...b.settings, ...(d.settings || {}) }, workouts: Array.isArray(d.workouts) ? d.workouts : [] };
+    if (!d.version || d.version < 6) {
+      // Avant toute migration, on garde une copie intacte des données de l'ancienne version.
+      try { if (!localStorage.getItem("mpf.backup.v5")) localStorage.setItem("mpf.backup.v5", raw); } catch (e) {}
+    }
+    const out = { ...b, ...d, version: 6,
+      settings: { ...b.settings, ...(d.settings || {}) },
+      sync: { ...b.sync, ...(d.sync || {}), cursor: { ...((d.sync || {}).cursor || {}) } },
+      workouts: Array.isArray(d.workouts) ? d.workouts : [],
+      weights: Array.isArray(d.weights) ? d.weights : [] };
+    // tout ce qui n'a jamais été envoyé au cloud est marqué « à envoyer »
+    for (const w of out.workouts) if (!w.syncedAt && w.dirty === undefined) w.dirty = true;
+    return out;
   } catch (e) { storageOK = false; return blankDB(); }
 }
 let DB = load();
@@ -51,6 +66,11 @@ const save = () => { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); };
 addEventListener("pagehide", () => saveT && saveNow());
 document.addEventListener("visibilitychange", () => { if (document.hidden && saveT) saveNow(); });
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+saveNow();
+
+/* Toute modification d'une séance terminée, d'une pesée ou de l'objectif passe par ici :
+   la donnée est datée et marquée « à synchroniser ». */
+function markDirty(rec) { rec.updatedAt = new Date().toISOString(); rec.dirty = true; rec._v = (rec._v || 0) + 1; scheduleSync(); }
 
 const live = () => DB.workouts.filter(w => !w.deleted && w.status === "done");
 const sorted = () => live().sort((a, b) => (b.date + (b.finishedAt || "")).localeCompare(a.date + (a.finishedAt || "")));
@@ -83,6 +103,59 @@ function prFor(exId) {
   for (const w of live()) { const b = bestOf(exId, w); if (b && (!pr || b.score > pr.score)) pr = { ...b, date: w.date }; }
   return pr;
 }
+/* ───────────── Coach de progression (double progression) ───────────── */
+const INC = { presse: 5, "dc-halteres": 2, "curl-halteres": 2, "curl-marteau": 2, "elevations-laterales": 1, planche: 5 };
+const incOf = e => INC[e.id] || 2.5;
+function coach(exId, beforeDate, excludeId) {
+  const e = EXI[exId]; const last = prevFor(exId, excludeId, beforeDate); if (!last) return null;
+  const done = last.sets.filter(s => s.done && num(s.reps) > 0); if (!done.length) return null;
+  const top = e.reps[1], reps = done.map(s => num(s.reps));
+  const allTop = done.length >= e.series && reps.every(r => r >= top);
+  // stagnation : 3 dernières séances sans amélioration du meilleur score
+  const hist = sorted().filter(w => (!beforeDate || w.date <= beforeDate) && w.id !== excludeId && doneSets(w, exId).length).slice(0, 4).map(w => bestOf(exId, w).score);
+  const stall = hist.length >= 4 && Math.max(hist[0], hist[1], hist[2]) <= hist[3];
+  if (e.type === "time") {
+    const best = Math.max(...reps);
+    return allTop ? { up: true, txt: `Objectif : ${best + incOf(e)} s par série`, stall } : { up: false, txt: `Objectif : tenir ${Math.min(top, best + 5)} s sur chaque série`, stall };
+  }
+  const kgs = done.map(s => num(s.kg) || 0); const work = e.assist ? Math.min(...kgs) : Math.max(...kgs);
+  if (allTop) {
+    const nk = e.assist ? Math.max(0, work - incOf(e)) : work + incOf(e);
+    return { up: true, kg: nk, txt: e.assist ? `Réduis l'aide à ${fmtKg(nk)} kg (≈ un cran) et vise ${e.reps[0]} reps` : `Monte à ${fmtKg(nk)} kg (≈ un cran) et vise ${e.reps[0]} reps`, stall };
+  }
+  const tgt = reps.map(r => Math.min(top, r + 1));
+  const same = kgs.every(k => k === kgs[0]);
+  return { up: false, kg: work, txt: same ? `Garde ${fmtKg(work)} kg et vise ${tgt.join(" · ")} reps` : `Mêmes charges (${kgs.map(fmtKg).join(" · ")} kg), vise ${tgt.join(" · ")} reps`, stall };
+}
+
+/* ───────────── Poids ───────────── */
+const wgLive = () => DB.weights.filter(x => !x.deleted && num(x.kg) > 0).sort((a, b) => a.date.localeCompare(b.date) || (a.updatedAt || "").localeCompare(b.updatedAt || ""));
+function wgDaily() { const m = new Map(); for (const x of wgLive()) m.set(x.date, x); return [...m.values()]; }
+const dayNum = s => Math.round(parseDay(s).getTime() / 864e5);
+function wgAvg(daily, i) { const d0 = dayNum(daily[i].date); const pts = daily.filter((x, k) => k <= i && dayNum(x.date) > d0 - 7); return pts.reduce((a, x) => a + num(x.kg), 0) / pts.length; }
+function wgStats() {
+  const daily = wgDaily(); if (!daily.length) return null;
+  const goal = num(DB.settings.goalKg) || 77;
+  const start = num(DB.settings.startKg) || num(daily[0].kg);
+  const cur = wgAvg(daily, daily.length - 1), last = num(daily[daily.length - 1].kg);
+  const lastDay = dayNum(daily[daily.length - 1].date);
+  const win = daily.filter(x => dayNum(x.date) > lastDay - 28);
+  let slope = null;
+  if (win.length >= 3 && dayNum(win[win.length - 1].date) - dayNum(win[0].date) >= 6) {
+    const xs = win.map(x => dayNum(x.date)), ys = win.map(x => num(x.kg));
+    const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length;
+    let n = 0, d = 0; xs.forEach((x, i) => { n += (x - mx) * (ys[i] - my); d += (x - mx) ** 2; });
+    slope = d ? n / d * 7 : null; // kg par semaine
+  }
+  let eta = null;
+  if (slope != null && slope < -0.05 && cur > goal) { const days = (cur - goal) / (-slope / 7); if (days < 3 * 365) { const t = new Date(); t.setDate(t.getDate() + Math.round(days)); eta = t; } }
+  const low = Math.min(...daily.map(x => num(x.kg)));
+  const pct = start > goal ? Math.max(0, Math.min(100, (start - cur) / (start - goal) * 100)) : (cur <= goal ? 100 : 0);
+  // variation sur 7 jours de la moyenne
+  let wk = null; { const i7 = [...daily.keys()].filter(i => dayNum(daily[i].date) <= lastDay - 7).pop(); if (i7 != null) wk = cur - wgAvg(daily, i7); }
+  return { daily, goal, start, cur, last, slope, eta, low, pct, wk, left: Math.max(0, cur - goal), lost: start - cur };
+}
+
 const setTxt = (e, s) => e.type === "time" ? `${num(s.reps)} s${num(s.kg) ? " +" + fmtKg(num(s.kg)) + " kg" : ""}` : `${fmtKg(num(s.kg) || 0)} kg × ${num(s.reps)}`;
 
 /* ───────────── Icônes ───────────── */
@@ -100,6 +173,7 @@ const I = {
   dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>',
   ul: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5M4 21h16"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  scale: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8.5 9.5a5 5 0 0 1 7 0L13 12"/></svg>',
   cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19.5 10 4 4 0 0 1 18 18z"/></svg>'
 };
 
@@ -152,7 +226,7 @@ function navHTML(cur) {
   const a = (h, k, ic, lb, extra = "") => `<a href="${h}" class="${cur === k ? "on" : ""} ${extra}" ${cur === k ? 'aria-current="page"' : ""}>${ic}<span>${lb}</span></a>`;
   return a("#/", "home", I.home, "Accueil") + a("#/programme/" + todaySession(), "prog", I.list, "Programme") +
     `<a href="#/seance" class="go ${cur === "wk" ? "on" : ""}" aria-label="${has ? "Reprendre la séance en cours" : "Démarrer une séance"}"><span class="pill">${I.play}</span>${has ? '<i class="dot"></i>' : ""}<span>Séance</span></a>` +
-    a("#/historique", "hist", I.hist, "Historique") + a("#/progres", "prog2", I.chart, "Progrès");
+    a("#/progres", "prog2", I.chart, "Progrès") + a("#/poids", "poids", I.scale, "Poids");
 }
 function todaySession() { const d = new Date().getDay(); return d === 1 ? "A" : d === 3 ? "B" : d === 5 ? "C" : nextSession(); }
 function nextSession() {
@@ -198,7 +272,8 @@ function vHome() {
     <div class="row2"><a class="btn sec" href="#/programme/${s}">Voir</a>
       <button class="btn pri" data-act="start" data-s="${s}">${I.play}Commencer</button></div>
   </section>
-  <div class="sec-title"><h2 class="disp">Cette semaine</h2></div>
+  ${weightCardHome()}
+  <div class="sec-title"><h2 class="disp">Cette semaine</h2>${syncBadge()}</div>
   <div class="tiles">
     <div class="tile"><b>${thisWeek.length}<span class="dim">/3</span></b><small>séances cette semaine</small></div>
     <div class="tile"><b>${ws.length}</b><small>séances terminées au total</small></div>
@@ -206,6 +281,17 @@ function vHome() {
   </div>
   <div class="sec-title"><h2 class="disp">Dernières perfs</h2>${last ? `<span class="mut" style="font-size:13px">${esc(fmtDay(last.date))}</span>` : ""}</div>
   ${lastHTML}`;
+}
+
+function weightCardHome() {
+  const st = wgStats();
+  if (!st) return `<a class="card pad wcard" href="#/poids" style="margin-top:14px"><div><div class="eyebrow">Poids · objectif ${fmtKg(num(DB.settings.goalKg) || 77)} kg</div>
+    <div class="disp" style="font-size:24px;margin-top:6px">Ajoute ta première pesée</div></div><span class="btn pri sm">Peser</span></a>`;
+  return `<a class="card pad wcard" href="#/poids" style="margin-top:14px">
+    <div style="flex:1;min-width:0"><div class="eyebrow">Poids · objectif ${fmtKg(st.goal)} kg</div>
+      <div class="wrow"><b class="disp">${fmtKg(Math.round(st.cur * 10) / 10)}<small> kg</small></b>
+      <span class="mut">${st.left > 0.05 ? "encore " + fmtKg(Math.round(st.left * 10) / 10) + " kg" : "objectif atteint ✓"}</span></div>
+      <div class="pbar"><i style="width:${st.pct.toFixed(1)}%"></i></div></div></a>`;
 }
 
 function vProgramme(s) {
@@ -261,6 +347,7 @@ function vExercise(id) {
   ${pv ? `<div class="tiles" style="grid-template-columns:1fr 1fr">
       <div class="tile"><b>${pr ? (e.type === "time" ? pr.r + " s" : fmtKg(pr.k) + " kg") : "–"}</b><small>record${e.type === "time" ? "" : " · " + (pr ? pr.r + " reps" : "")}${e.assist ? " (moins = mieux)" : ""} · ${pr ? esc(fmtShort(pr.date)) : ""}</small></div>
       <div class="tile"><b>${hist.length}</b><small>séances avec cet exercice</small></div></div>
+    ${(() => { const ch = coach(id); return ch ? `<div style="margin-top:10px">${coachHTML(ch)}</div>` : ""; })()}
     <div class="card pad" style="margin-top:10px"><div class="eyebrow" style="margin-bottom:10px">Dernière fois · ${esc(fmtDay(pv.w.date))}</div>
       ${pv.sets.filter(x => x.done).map((x, i) => `<div class="pr"><span>Série ${i + 1}</span><b>${setTxt(e, x)}</b></div>`).join("")}</div>
     ${hist.length > 1 ? `<div class="card pad" style="margin-top:10px">${lineChart(hist.map(w => ({ x: w.date, y: e.type === "time" ? bestOf(id, w).r : bestOf(id, w).k })), e.type === "time" ? "s" : "kg")}</div>` : ""}`
@@ -302,13 +389,16 @@ function setRowHTML(e, w, i, prev) {
     <input inputmode="numeric" enterkeyhint="done" autocomplete="off" data-f="reps" value="${esc(s.reps)}" placeholder="${esc(phR)}" aria-label="Série ${i + 1} : ${e.type === "time" ? "secondes" : "répétitions"}">
     <button type="button" class="ck" data-act="ck" aria-pressed="${s.done}" aria-label="Valider la série ${i + 1}">${I.check}</button></div>`;
 }
+const coachHTML = ch => `<div class="coach ${ch.up ? "up" : ""}"><span class="ci">${ch.up ? "↑" : "→"}</span><span>${esc(ch.txt)}${ch.stall ? `<small>3 séances sans progrès : garde la charge, soigne la technique, le sommeil et les protéines.</small>` : ""}</span></div>`;
 function exBlockHTML(e, w, mode) {
   const ent = w.entries[e.id]; const prev = prevFor(e.id, w.id, w.date);
   const pb = prev ? prev.sets.filter(x => x.done) : [];
+  const ch = mode === "edit" ? null : coach(e.id, w.date, w.id);
   return `<section class="card wex" id="wx-${e.id}">
     <div class="hd"><img src="${img(e.id)}" alt=""><div class="t"><h3 class="disp">${esc(e.nom)}</h3><small>Objectif ${e.series} × ${repTxt(e)} · repos ${restTxt(e.repos)}</small></div>
       <a class="iconbtn" href="#/exercice/${e.id}" aria-label="Fiche de l'exercice">${I.info}</a></div>
     ${prev ? `<div class="last">Dernière fois (${esc(fmtShort(prev.w.date))}) : <b>${pb.map(x => e.type === "time" ? num(x.reps) + " s" : fmtKg(num(x.kg) || 0) + "×" + num(x.reps)).join(" · ")}</b></div>` : `<div class="last">Première fois : ${e.type === "time" ? `vise ${e.reps[0]} secondes en gardant le corps bien aligné.` : e.assist ? "commence avec beaucoup d'aide, puis réduis-la au fil des semaines." : `choisis une charge qui te permet de faire ${e.reps[0]} reps proprement.`}</div>`}
+    ${ch ? coachHTML(ch) : ""}
     ${e.assist ? `<div class="last">Ici le poids est une <b>aide</b> : moins de kg = plus difficile.</div>` : ""}
     <div class="sets">
       <div class="sr-h"><span>#</span><span>Précédent</span><span>${e.assist ? "Aide kg" : e.type === "time" ? "Lest kg" : "kg"}</span><span>${e.type === "time" ? "sec" : "reps"}</span><span></span></div>
@@ -347,6 +437,7 @@ function vWorkout() {
 }
 function editorHTML(w, mode) {
   const exs = EX.filter(e => e.s === w.session);
+  for (const e of exs) if (!w.entries[e.id]) w.entries[e.id] = { sets: Array.from({ length: e.series }, () => ({ kg: "", reps: "", done: false })), note: "" };
   const done = wSets(w), tot = wTotalSets(w);
   const isEdit = mode === "edit";
   return `<div class="wk-head"><div class="r">
@@ -415,7 +506,7 @@ function finishSheet() {
 function finishOK() {
   const w = DB.draft; if (!w) return;
   const d = $("#f-date"); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d.value)) w.date = d.value;
-  w.status = "done"; w.finishedAt = new Date().toISOString(); w.updatedAt = w.finishedAt; w.rev = (w.rev || 0) + 1;
+  w.status = "done"; w.finishedAt = new Date().toISOString(); w.rev = (w.rev || 0) + 1; markDirty(w);
   w.durationMin = Math.max(1, Math.round((Date.now() - new Date(w.startedAt)) / 60000));
   if (!DB.workouts.some(x => x.id === w.id)) DB.workouts.push(w);
   DB.draft = null; saveNow(); closeSheet(); stopRest();
@@ -426,14 +517,15 @@ function finishOK() {
 /* ───────────── Historique ───────────── */
 function vHistory() {
   const ws = sorted();
-  if (!ws.length) return `<header class="top"><h1 class="disp">Historique</h1></header><div class="card empty"><div class="disp">Vide pour l'instant</div>Chaque séance terminée apparaîtra ici, datée, avec toutes tes séries.</div>`;
-  let html = `<header class="top"><div><div class="eyebrow">${ws.length} séance${ws.length > 1 ? "s" : ""}</div><h1 class="disp" style="margin-top:6px">Historique</h1></div></header>`;
+  const head = `<header class="top"><div><div class="eyebrow">${ws.length} séance${ws.length > 1 ? "s" : ""}</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("hist")}`;
+  if (!ws.length) return head + `<div class="card empty" style="margin-top:14px"><div class="disp">Vide pour l'instant</div>Chaque séance terminée apparaîtra ici, datée, avec toutes tes séries.</div>`;
+  let html = head;
   let cur = "";
   for (const w of ws) {
     const m = parseDay(w.date).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
     if (m !== cur) { cur = m; html += `<div class="hgrp eyebrow">${esc(m)}</div>`; }
     html += `<a class="card hcard" href="#/historique/${w.id}"><span class="L disp">${w.session}</span>
-      <span><b>${esc(fmtDay(w.date))}${w.importedFrom ? '<span class="badge">import</span>' : ""}</b><small>${wSets(w)} séries${w.durationMin ? " · " + w.durationMin + " min" : ""}${w.cardio && w.cardio.done ? " · cardio ✓" : ""}</small></span>
+      <span><b>${esc(fmtDay(w.date))}${w.importedFrom ? '<span class="badge">import</span>' : ""}${w.conflict ? '<span class="badge">conflit</span>' : ""}</b><small>${wSets(w)} séries${w.durationMin ? " · " + w.durationMin + " min" : ""}${w.cardio && w.cardio.done ? " · cardio ✓" : ""}</small></span>
       <span class="v">${fmtVol(wVol(w))}<small class="mut">volume</small></span></a>`;
   }
   return html;
@@ -470,95 +562,274 @@ function editSave() {
   const b = DB.editBuf; if (!b) return;
   for (const id in b.entries) { const e = EXI[id]; if (!e) continue; for (const s of b.entries[id].sets) if (s.done) { const err = validSet(e, s); if (err) { toast(e.nom + " : " + err); return; } } }
   const i = DB.workouts.findIndex(x => x.id === b.id); if (i < 0) return;
-  b.editedAt = b.updatedAt = new Date().toISOString(); b.rev = (b.rev || 0) + 1;
+  b.editedAt = new Date().toISOString(); b.rev = (b.rev || 0) + 1; markDirty(b);
   DB.workouts[i] = b; DB.editBuf = null; saveNow();
   location.hash = "#/historique/" + b.id; setTimeout(() => toast("Modifications enregistrées ✓"), 50);
 }
 
 /* ───────────── Progrès ───────────── */
-function weeklyData(n = 8) {
+const startDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+function weeklyData(n = 12) {
   const m0 = mondayOf(new Date()); const out = [];
   for (let k = n - 1; k >= 0; k--) {
     const a = new Date(m0); a.setDate(a.getDate() - 7 * k); const b = new Date(a); b.setDate(b.getDate() + 7);
     const ws = live().filter(w => { const d = parseDay(w.date); return d >= a && d < b; });
-    out.push({ label: a.toLocaleDateString("fr-FR", { day: "numeric", month: "numeric" }), vol: ws.reduce((x, w) => x + wVol(w), 0), n: ws.length });
+    out.push({ start: a, label: a.toLocaleDateString("fr-FR", { day: "numeric", month: "numeric" }), vol: ws.reduce((x, w) => x + wVol(w), 0), n: ws.length, sets: ws.reduce((x, w) => x + wSets(w), 0), ws });
   }
   return out;
+}
+function streakWeeks() {
+  const wk = weeklyData(52); let s = 0; let i = wk.length - 1;
+  if (wk[i].n >= 3) s++; i--; // semaine en cours : comptée seulement si déjà complète
+  for (; i >= 0; i--) { if (wk[i].n >= 3) s++; else break; }
+  return s;
+}
+function prEvents() {
+  const ev = []; const chrono = sorted().slice().reverse();
+  for (const e of EX) {
+    let best = null;
+    for (const w of chrono) { const b = bestOf(e.id, w); if (!b) continue; if (best != null && b.score > best + 1e-9) ev.push({ ex: e, date: w.date, b }); if (best == null || b.score > best) best = b.score; }
+  }
+  return ev;
+}
+const GROUPS = [
+  { nom: "Pectoraux", keys: ["pecs", "pecs-haut"] }, { nom: "Dos", keys: ["dorsaux", "grand-rond", "trapezes", "lombaires"] },
+  { nom: "Épaules", keys: ["delt-ant", "delt-lat", "delt-post"] }, { nom: "Biceps", keys: ["biceps", "avant-bras"] },
+  { nom: "Triceps", keys: ["triceps"] }, { nom: "Abdos", keys: ["abdos", "obliques"] },
+  { nom: "Quadriceps", keys: ["quadriceps"] }, { nom: "Ischios", keys: ["ischios"] },
+  { nom: "Fessiers", keys: ["fessiers"] }, { nom: "Mollets", keys: ["mollets"] }];
+function muscleWeek(ws) {
+  const g = GROUPS.map(x => ({ ...x, n: 0 }));
+  for (const w of ws) for (const id in w.entries) {
+    const e = EXI[id]; if (!e) continue; const n = doneSets(w, id).length; if (!n) continue;
+    for (const gr of g) { if (e.P.some(m => gr.keys.includes(m))) gr.n += n; else if (e.S.some(m => gr.keys.includes(m))) gr.n += n * 0.5; }
+  }
+  return g;
+}
+function calHeat() {
+  const wk = weeklyData(12); const cs = 20, gap = 4, left = 22, top = 4;
+  const W = left + wk.length * (cs + gap), H = top + 7 * (cs + gap) + 16; const today = isoDay();
+  let s = `<svg class="chart cal" viewBox="0 0 ${W} ${H}" role="img" aria-label="Séances des 12 dernières semaines">`;
+  ["L", "M", "M", "J", "V", "S", "D"].forEach((d, i) => { s += `<text x="0" y="${top + i * (cs + gap) + 14}">${d}</text>`; });
+  wk.forEach((w, k) => {
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(w.start); day.setDate(day.getDate() + i); const ds = isoDay(day);
+      const x = left + k * (cs + gap), y = top + i * (cs + gap);
+      const sess = w.ws.find(z => z.date === ds);
+      if (ds > today) { s += `<rect x="${x}" y="${y}" width="${cs}" height="${cs}" rx="5" fill="none" stroke="#1a1a1a"/>`; continue; }
+      s += `<rect x="${x}" y="${y}" width="${cs}" height="${cs}" rx="5" fill="${sess ? "#fff" : "#1c1c1c"}" ${ds === today ? 'stroke="#fff" stroke-width="1.5"' : ""}/>`;
+      if (sess) s += `<text x="${x + cs / 2}" y="${y + 14}" text-anchor="middle" style="fill:#000;font-weight:800;font-size:11px">${sess.session}</text>`;
+    }
+    if (k % 3 === 0) s += `<text x="${left + k * (cs + gap)}" y="${H - 2}">${w.label}</text>`;
+  });
+  return s + "</svg>";
 }
 function barChart(data) {
   const W = 340, H = 180, pl = 8, pb = 26, pt = 22; const max = Math.max(1, ...data.map(d => d.vol));
   const bw = (W - pl * 2) / data.length;
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Volume par semaine">`;
   data.forEach((d, i) => {
-    const h = d.vol ? Math.max(3, (H - pb - pt) * d.vol / max) : 3, x = pl + i * bw + 5, y = H - pb - h;
-    s += `<rect class="${d.vol ? "bar" : "bar0"}" x="${x}" y="${y}" width="${bw - 10}" height="${h}" rx="4"/>`;
-    if (d.vol) s += `<text class="lbl" x="${x + (bw - 10) / 2}" y="${y - 6}" text-anchor="middle">${d.vol >= 1000 ? (d.vol / 1000).toFixed(1).replace(".", ",") + " t" : Math.round(d.vol)}</text>`;
-    s += `<text x="${x + (bw - 10) / 2}" y="${H - 8}" text-anchor="middle">${d.label}</text>`;
+    const h = d.vol ? Math.max(3, (H - pb - pt) * d.vol / max) : 3, x = pl + i * bw + 3, y = H - pb - h, last = i === data.length - 1;
+    s += `<rect class="${d.vol ? "bar" : "bar0"}" x="${x}" y="${y}" width="${bw - 6}" height="${h}" rx="4" ${last && d.vol ? 'style="fill:url(#hatch)"' : ""}/>`;
+    if (d.vol && (i % 2 === 1 || last)) s += `<text class="lbl" x="${x + (bw - 6) / 2}" y="${y - 6}" text-anchor="middle">${d.vol >= 1000 ? (d.vol / 1000).toFixed(1).replace(".", ",") : Math.round(d.vol)}</text>`;
+    if (i % 2 === 1 || last) s += `<text x="${x + (bw - 6) / 2}" y="${H - 8}" text-anchor="middle">${d.label}</text>`;
   });
   return s + "</svg>";
 }
-function lineChart(pts, unit) {
-  const W = 340, H = 190, pl = 34, pr = 14, pt = 18, pb = 28;
-  const ys = pts.map(p => p.y); let lo = Math.min(...ys), hi = Math.max(...ys); if (lo === hi) { lo -= 2; hi += 2; }
-  const span = hi - lo; lo = Math.max(0, lo - span * .15); hi = hi + span * .15;
-  const X = i => pl + (pts.length === 1 ? (W - pl - pr) / 2 : i * (W - pl - pr) / (pts.length - 1));
+function lineChart(pts, unit, opt = {}) {
+  const W = 340, H = 190, pl = 36, pr = 14, pt = 18, pb = 28;
+  const ys = pts.map(p => p.y).concat(opt.goal != null ? [opt.goal] : []).concat(opt.avg ? opt.avg.map(p => p.y) : []);
+  let lo = Math.min(...ys), hi = Math.max(...ys); if (hi - lo < 1) { lo -= 1; hi += 1; }
+  const span = hi - lo; lo = Math.max(0, lo - span * .12); hi = hi + span * .12;
+  const timeX = !!opt.time; const t0 = timeX ? dayNum(pts[0].x) : 0, t1 = timeX ? Math.max(t0 + 1, dayNum(pts[pts.length - 1].x)) : 0;
+  const X = (p, i) => timeX ? pl + (dayNum(p.x) - t0) / (t1 - t0) * (W - pl - pr) : pl + (pts.length === 1 ? (W - pl - pr) / 2 : i * (W - pl - pr) / (pts.length - 1));
   const Y = v => pt + (H - pt - pb) * (1 - (v - lo) / (hi - lo));
+  const dec = hi - lo < 6 ? 1 : 0;
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Évolution">`;
-  for (let g = 0; g <= 3; g++) { const v = lo + (hi - lo) * g / 3; s += `<line class="grid" x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${pl - 6}" y="${Y(v) + 4}" text-anchor="end">${Math.round(v)}</text>`; }
-  s += `<path class="ln" d="${pts.map((p, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p.y).toFixed(1)).join("")}"/>`;
-  pts.forEach((p, i) => { s += `<circle class="pt" cx="${X(i)}" cy="${Y(p.y)}" r="4"/>`; });
+  for (let g = 0; g <= 3; g++) { const v = lo + (hi - lo) * g / 3; s += `<line class="grid" x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${pl - 6}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(dec).replace(".", ",")}</text>`; }
+  if (opt.goal != null) s += `<line x1="${pl}" x2="${W - pr}" y1="${Y(opt.goal)}" y2="${Y(opt.goal)}" stroke="#fff" stroke-dasharray="5 5" stroke-width="1.5"/><text x="${W - pr}" y="${Y(opt.goal) - 6}" text-anchor="end" class="lbl">objectif ${fmtKg(opt.goal)}</text>`;
+  if (opt.avg) {
+    s += pts.map((p, i) => `<circle cx="${X(p, i)}" cy="${Y(p.y)}" r="2.6" fill="#777"/>`).join("");
+    s += `<path class="ln" d="${opt.avg.map((p, i) => (i ? "L" : "M") + X(p, i).toFixed(1) + " " + Y(p.y).toFixed(1)).join("")}"/>`;
+  } else {
+    s += `<path class="ln" d="${pts.map((p, i) => (i ? "L" : "M") + X(p, i).toFixed(1) + " " + Y(p.y).toFixed(1)).join("")}"/>`;
+    pts.forEach((p, i) => { s += `<circle class="pt" cx="${X(p, i)}" cy="${Y(p.y)}" r="4"/>`; });
+  }
   const step = Math.ceil(pts.length / 5);
-  pts.forEach((p, i) => { if (i % step === 0 || i === pts.length - 1) s += `<text x="${X(i)}" y="${H - 8}" text-anchor="middle">${fmtShort(p.x).replace(".", "")}</text>`; });
+  pts.forEach((p, i) => { if (i % step === 0 || i === pts.length - 1) s += `<text x="${Math.min(W - pr - 14, Math.max(pl + 14, X(p, i)))}" y="${H - 8}" text-anchor="middle">${fmtShort(p.x).replace(".", "")}</text>`; });
   s += `<text x="${pl}" y="11" class="lbl">${unit}</text>`;
   return s + "</svg>";
 }
-function vProgress(q) {
+const pctTxt = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v)) + " %";
+const delta = (a, b) => b ? (a - b) / b * 100 : null;
+function progSeg(cur) { return `<div class="seg seg2" role="tablist"><button role="tab" aria-selected="${cur === "stats"}" class="${cur === "stats" ? "on" : ""}" data-go="#/progres">Statistiques</button><button role="tab" aria-selected="${cur === "hist"}" class="${cur === "hist" ? "on" : ""}" data-go="#/historique">Historique</button></div>`; }
+function metricPts(e, metric) {
+  return sorted().filter(w => doneSets(w, e.id).length).reverse().map(w => {
+    const b = bestOf(e.id, w);
+    const y = e.type === "time" ? b.r : metric === "1rm" && !e.assist ? Math.round(e1rm(b.k, b.r) * 10) / 10 : metric === "vol" ? doneSets(w, e.id).reduce((a, s) => a + setVol(e, s), 0) : b.k;
+    return { x: w.date, y, w };
+  });
+}
+function vProgress(q, metric) {
   const ws = live();
-  if (!ws.length) return `<header class="top"><h1 class="disp">Progrès</h1></header><div class="card empty"><div class="disp">Pas encore de courbe</div>Termine 2 séances pour voir ta progression charge par charge.</div>`;
+  const head = `<header class="top"><div><div class="eyebrow">${ws.length ? "Depuis le " + esc(fmtShort(sorted().slice(-1)[0].date)) : "Tes statistiques"}</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("stats")}`;
+  if (!ws.length) return head + `<div class="card empty" style="margin-top:14px"><div class="disp">Pas encore de courbe</div>Termine ta première séance : tes indicateurs apparaîtront ici.</div>`;
+  const wk = weeklyData(12), cur = wk[11], prev = wk[10];
+  const d28 = startDay(new Date()); d28.setDate(d28.getDate() - 27);
+  const n28 = ws.filter(w => parseDay(w.date) >= d28).length;
+  const prs = prEvents(); const d30 = startDay(new Date()); d30.setDate(d30.getDate() - 29);
+  const prs30 = prs.filter(p => parseDay(p.date) >= d30);
+  const streak = streakWeeks();
+  const vd = delta(cur.vol, prev.vol);
+  const mw = muscleWeek(cur.ws.length ? cur.ws : prev.ws); const mwLabel = cur.ws.length ? "cette semaine" : "la semaine dernière";
+  const mwMax = Math.max(10, ...mw.map(g => g.n));
+  const strong = mw.filter(g => g.n >= 4).flatMap(g => g.keys), weak = mw.filter(g => g.n > 0 && g.n < 4).flatMap(g => g.keys);
+  const st = partState(strong, weak);
   const used = EX.filter(e => ws.some(w => doneSets(w, e.id).length));
   const sel = EXI[q] && used.includes(EXI[q]) ? q : used[0].id; const e = EXI[sel];
-  const pts = sorted().filter(w => doneSets(w, sel).length).reverse().map(w => ({ x: w.date, y: e.type === "time" ? bestOf(sel, w).r : bestOf(sel, w).k }));
-  const totalSets = ws.reduce((a, w) => a + wSets(w), 0), totalVol = ws.reduce((a, w) => a + wVol(w), 0);
-  return `<header class="top"><div><div class="eyebrow">Depuis le ${esc(fmtShort(sorted().slice(-1)[0].date))}</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div></header>
-    <div class="tiles"><div class="tile"><b>${ws.length}</b><small>séances</small></div><div class="tile"><b>${totalSets}</b><small>séries validées</small></div><div class="tile"><b>${fmtVol(totalVol).split(" ")[0]}<small style="display:inline;font-size:14px"> ${fmtVol(totalVol).split(" ")[1]}</small></b><small>volume total</small></div></div>
-    <div class="sec-title"><h2 class="disp">Volume / semaine</h2></div>
-    <div class="card pad">${barChart(weeklyData())}</div>
-    <div class="sec-title"><h2 class="disp">Par exercice</h2></div>
-    <select class="sel" id="exsel" aria-label="Choisir un exercice">${used.map(x => `<option value="${x.id}" ${x.id === sel ? "selected" : ""}>${x.s} · ${esc(x.nom)}</option>`).join("")}</select>
-    <div class="card pad" style="margin-top:10px">
-      <div class="eyebrow" style="margin-bottom:8px">${e.type === "time" ? "Meilleur temps (s)" : e.assist ? "Aide utilisée (kg) — plus bas = plus fort" : "Charge de la meilleure série (kg)"}</div>
-      ${pts.length > 1 ? lineChart(pts, e.type === "time" ? "s" : "kg") : `<p class="mut" style="margin:0">Une seule séance pour l'instant (${pts[0].y} ${e.type === "time" ? "s" : "kg"}). La courbe apparaîtra à la prochaine.</p>`}
-    </div>
-    <div class="sec-title"><h2 class="disp">Records</h2></div>
-    <div class="card" style="padding:4px 16px">${used.map(x => { const p = prFor(x.id); return `<a class="pr" href="#/exercice/${x.id}" style="text-decoration:none"><span>${esc(x.nom)}</span><b>${x.type === "time" ? p.r + " s" : fmtKg(p.k) + " kg × " + p.r}</b></a>`; }).join("")}</div>`;
+  const mets = e.type === "time" ? [["max", "Durée"]] : e.assist ? [["max", "Aide"]] : [["max", "Charge max"], ["1rm", "1RM estimé"], ["vol", "Volume"]];
+  const m = mets.some(x => x[0] === metric) ? metric : mets[0][0];
+  const pts = metricPts(e, m);
+  const first = pts[0], last = pts[pts.length - 1];
+  const gain = pts.length > 1 ? (e.assist ? -delta(last.y, first.y) : delta(last.y, first.y)) : null;
+  const pr = prFor(sel); const ch = coach(sel);
+  const unit = e.type === "time" ? "s" : m === "vol" ? "kg" : "kg";
+  return head + `
+  <div class="sec-title"><h2 class="disp">Vue d'ensemble</h2></div>
+  <div class="kgrid">
+    <div class="tile"><b>${cur.n}<span class="dim">/3</span></b><small>séances cette semaine</small></div>
+    <div class="tile"><b>${Math.min(100, Math.round(n28 / 12 * 100))}<span class="dim"> %</span></b><small>assiduité sur 4 semaines (${n28}/12)</small></div>
+    <div class="tile"><b>${streak}</b><small>semaine${streak > 1 ? "s" : ""} complète${streak > 1 ? "s" : ""} d'affilée (3 séances)</small></div>
+    <div class="tile"><b>${prs30.length}</b><small>record${prs30.length > 1 ? "s" : ""} battu${prs30.length > 1 ? "s" : ""} en 30 jours</small></div>
+    <div class="tile"><b>${fmtVol(cur.vol).replace(/ (t|kg)$/, "<span class='dim' style='font-size:15px'> $1</span>")}</b><small>volume cette semaine${vd != null && prev.vol ? ` · <span class="tag">${pctTxt(vd)}</span> vs sem. dernière` : ""}</small></div>
+    <div class="tile"><b>${ws.length}</b><small>séances au total · ${ws.reduce((a, w) => a + wSets(w), 0)} séries</small></div>
+  </div>
+  <div class="sec-title"><h2 class="disp">Régularité</h2><span class="mut" style="font-size:13px">12 semaines</span></div>
+  <div class="card pad">${calHeat()}</div>
+  <div class="sec-title"><h2 class="disp">Muscles travaillés</h2><span class="mut" style="font-size:13px">${mwLabel}</span></div>
+  <div class="card">
+    <div class="ana" style="padding-bottom:10px"><figure>${bodySVG("front", st)}<figcaption>FACE</figcaption></figure><figure>${bodySVG("back", st)}<figcaption>DOS</figcaption></figure></div>
+    <div class="legend">
+      <ul class="mbars">${mw.slice().sort((a, b) => b.n - a.n).map(g => `<li><span>${g.nom}</span><i><b style="width:${(g.n / mwMax * 100).toFixed(0)}%"></b></i><em>${fmtKg(g.n)}</em></li>`).join("")}</ul>
+      <p class="mut" style="font-size:12px;margin:10px 0 0">Séries par muscle (une série secondaire compte pour ½). En blanc : 4 séries ou plus · hachuré : moins de 4. Repère courant : autour de 10 séries par muscle et par semaine.</p>
+    </div></div>
+  <div class="sec-title"><h2 class="disp">Volume / semaine</h2><span class="mut" style="font-size:13px">tonnes · hachuré = en cours</span></div>
+  <div class="card pad">${barChart(wk)}</div>
+  <div class="sec-title"><h2 class="disp">Par exercice</h2></div>
+  <select class="sel" id="exsel" aria-label="Choisir un exercice">${used.map(x => `<option value="${x.id}" ${x.id === sel ? "selected" : ""}>${x.s} · ${esc(x.nom)}</option>`).join("")}</select>
+  <div class="kgrid" style="margin-top:10px">
+    <div class="tile"><b>${e.type === "time" ? pr.r + "<span class='dim' style='font-size:15px'> s</span>" : fmtKg(pr.k) + "<span class='dim' style='font-size:15px'> kg</span>"}</b><small>record${e.type === "time" ? "" : " · × " + pr.r}${e.assist ? " (aide, moins = mieux)" : ""} · ${esc(fmtShort(pr.date))}</small></div>
+    <div class="tile"><b>${e.type === "time" || e.assist ? pts.length : fmtKg(Math.round(e1rm(bestOf(sel, last.w).k, bestOf(sel, last.w).r)))}${e.type === "time" || e.assist ? "" : "<span class='dim' style='font-size:15px'> kg</span>"}</b><small>${e.type === "time" || e.assist ? "séances" : "1RM estimé actuel"}</small></div>
+    <div class="tile"><b>${gain == null ? "–" : pctTxt(gain)}</b><small>progression depuis le ${esc(fmtShort(first.x))}</small></div>
+  </div>
+  ${ch ? `<div style="margin-top:10px">${coachHTML(ch)}</div>` : ""}
+  <div class="card pad" style="margin-top:10px">
+    ${mets.length > 1 ? `<div class="chips" style="margin-bottom:12px">${mets.map(([k, l]) => `<button class="chip ${k === m ? "on" : ""}" data-go="#/progres/${sel}/${k}">${l}</button>`).join("")}</div>` : `<div class="eyebrow" style="margin-bottom:8px">${mets[0][1]}${e.assist ? " — plus bas = plus fort" : ""}</div>`}
+    ${pts.length > 1 ? lineChart(pts, unit) : `<p class="mut" style="margin:0">Une seule séance pour l'instant. La courbe apparaîtra à la prochaine.</p>`}
+    <table class="mini-t">${pts.slice(-5).reverse().map(p => { const b = bestOf(sel, p.w); return `<tr><td>${esc(fmtShort(p.x))}</td><td>${setTxt(e, { kg: b.k, reps: b.r })}</td><td class="mut">${doneSets(p.w, sel).length} séries</td></tr>`; }).join("")}</table>
+  </div>
+  <div class="sec-title"><h2 class="disp">Records</h2><span class="mut" style="font-size:13px">gain depuis la 1re séance</span></div>
+  <div class="card" style="padding:4px 16px">${used.map(x => { const p = prFor(x.id); const mp = metricPts(x, "max"); const g = mp.length > 1 ? (x.assist ? -delta(mp[mp.length - 1].y, mp[0].y) : delta(mp[mp.length - 1].y, mp[0].y)) : null;
+    return `<a class="pr pr3" href="#/progres/${x.id}" style="text-decoration:none"><span>${esc(x.nom)}</span><b>${x.type === "time" ? p.r + " s" : fmtKg(p.k) + " kg × " + p.r}</b><em>${g == null ? "–" : pctTxt(g)}</em></a>`; }).join("")}</div>`;
 }
 
+/* ───────────── Poids ───────────── */
+function vWeight(range) {
+  const st = wgStats(); const goal = num(DB.settings.goalKg) || 77;
+  const lastE = wgLive().slice(-1)[0];
+  const today = DB.weights.find(x => !x.deleted && x.date === isoDay());
+  let html = `<header class="top"><div><div class="eyebrow">Objectif ${fmtKg(goal)} kg</div><h1 class="disp" style="margin-top:6px">Poids</h1></div>${syncBadge(true)}</header>
+  <div class="card pad">
+    <div class="eyebrow" style="margin-bottom:10px">${today ? "Pesée du jour (modifier)" : "Nouvelle pesée"}</div>
+    <div class="wform">
+      <div class="field"><label for="wg-kg">Poids kg</label><input id="wg-kg" inputmode="decimal" autocomplete="off" value="${today ? esc(String(today.kg).replace(".", ",")) : ""}" placeholder="${lastE ? esc(String(lastE.kg).replace(".", ",")) : "85,0"}"></div>
+      <div class="field"><label for="wg-date">Date</label><input id="wg-date" type="date" value="${isoDay()}" max="${isoDay()}"></div>
+      <div class="field"><label for="wg-waist">Taille cm</label><input id="wg-waist" inputmode="decimal" autocomplete="off" value="${today && today.waist ? esc(String(today.waist).replace(".", ",")) : ""}" placeholder="option."></div>
+    </div>
+    <div class="errmsg" id="wg-err" style="margin:0 0 10px" hidden></div>
+    <button class="btn pri block" data-act="wsave">Enregistrer la pesée</button>
+  </div>`;
+  if (!st) return html + `<div class="card empty" style="margin-top:14px"><div class="disp">Point de départ</div>Note ton poids aujourd'hui : l'appli calculera ta tendance, le reste à perdre jusqu'à ${fmtKg(goal)} kg et une date d'arrivée estimée.</div>` + weightTips() + weightSettings();
+  const r = range === "30" ? 30 : range === "tout" ? 99999 : 90;
+  const lastDay = dayNum(st.daily[st.daily.length - 1].date);
+  const idx = [...st.daily.keys()].filter(i => dayNum(st.daily[i].date) > lastDay - r);
+  const pts = idx.map(i => ({ x: st.daily[i].date, y: num(st.daily[i].kg) }));
+  const avg = idx.map(i => ({ x: st.daily[i].date, y: Math.round(wgAvg(st.daily, i) * 100) / 100 }));
+  const fast = st.slope != null && st.slope < -1;
+  html += `
+  <section class="hero" style="margin-top:14px">
+    <div class="eyebrow">Moyenne 7 jours</div>
+    <div class="wbig disp">${fmtKg(Math.round(st.cur * 10) / 10)}<small> kg</small></div>
+    <div class="focus" style="margin:4px 0 14px">${st.wk != null ? `<span class="tag">${st.wk <= 0 ? "−" : "+"}${fmtKg(Math.abs(Math.round(st.wk * 10) / 10))} kg</span> en 7 jours · ` : ""}dernière pesée ${fmtKg(st.last)} kg le ${esc(fmtShort(st.daily[st.daily.length - 1].date))}</div>
+    <div class="pbar pbar-lg"><i style="width:${st.pct.toFixed(1)}%"></i></div>
+    <div class="pscale"><span>${fmtKg(st.start)} kg<small>départ</small></span><b>${Math.round(st.pct)} %</b><span style="text-align:right">${fmtKg(goal)} kg<small>objectif</small></span></div>
+  </section>
+  <div class="kgrid" style="margin-top:12px">
+    <div class="tile"><b>${st.left > 0.05 ? fmtKg(Math.round(st.left * 10) / 10) : "0"}<span class="dim" style="font-size:15px"> kg</span></b><small>${st.left > 0.05 ? "restants jusqu'à " + fmtKg(goal) + " kg" : "objectif atteint ✓"}</small></div>
+    <div class="tile"><b>${st.slope == null ? "–" : (st.slope <= 0 ? "−" : "+") + fmtKg(Math.abs(Math.round(st.slope * 10) / 10))}<span class="dim" style="font-size:15px">${st.slope == null ? "" : " kg"}</span></b><small>${st.slope == null ? "tendance : 7 jours de pesées nécessaires" : "par semaine (tendance 4 sem.)"}</small></div>
+    <div class="tile"><b style="font-size:24px">${st.eta ? esc(st.eta.toLocaleDateString("fr-FR", { month: "short", year: "numeric" })) : "–"}</b><small>${st.eta ? "arrivée estimée à ce rythme" : st.left <= 0.05 ? "objectif atteint" : "date estimée : tendance à la baisse nécessaire"}</small></div>
+    <div class="tile"><b>${st.lost >= 0 ? "−" : "+"}${fmtKg(Math.abs(Math.round(st.lost * 10) / 10))}<span class="dim" style="font-size:15px"> kg</span></b><small>depuis le départ</small></div>
+    <div class="tile"><b>${fmtKg(st.low)}<span class="dim" style="font-size:15px"> kg</span></b><small>pesée la plus basse</small></div>
+    <div class="tile"><b>${st.daily.length}</b><small>pesées</small></div>
+  </div>
+  ${fast ? `<div class="note-box" style="margin-top:12px">Tu perds plus de 1 kg par semaine. Un rythme de 0,4 à 0,8 kg par semaine aide à garder ton muscle et ta force : n'hésite pas à manger un peu plus, surtout des protéines.</div>` : ""}
+  <div class="sec-title"><h2 class="disp">Courbe</h2></div>
+  <div class="card pad">
+    <div class="chips" style="margin-bottom:12px">${[["30", "30 j"], ["90", "90 j"], ["tout", "Tout"]].map(([k, l]) => `<button class="chip ${(range || "90") === k ? "on" : ""}" data-go="#/poids/${k}">${l}</button>`).join("")}</div>
+    ${pts.length > 1 ? lineChart(pts, "kg", { goal, avg, time: true }) : `<p class="mut" style="margin:0">La courbe apparaît dès la 2e pesée.</p>`}
+    <p class="mut" style="font-size:12px;margin:10px 0 0">Points gris : pesées · trait blanc : moyenne sur 7 jours · pointillés : objectif.</p>
+  </div>
+  <div class="sec-title"><h2 class="disp">Pesées</h2></div>
+  <div class="card" style="padding:4px 16px">${wgLive().slice(-12).reverse().map(x => `<div class="pr pr3"><span>${esc(fmtDay(x.date, { weekday: "short", day: "numeric", month: "short" }))}${x.conflict ? '<span class="badge">conflit</span>' : ""}</span><b>${fmtKg(num(x.kg))} kg${x.waist ? `<small class="mut" style="font-weight:500"> · ${fmtKg(num(x.waist))} cm</small>` : ""}</b><button class="chip" data-act="wdel" data-id="${x.id}" aria-label="Supprimer cette pesée">✕</button></div>`).join("")}</div>`;
+  return html + weightTips() + weightSettings();
+}
+const weightTips = () => `<div class="note-box" style="margin-top:14px">Pèse-toi le matin, à jeun, après être passé aux toilettes. Le poids du jour varie de ±1 kg (eau, sel, glucides) : regarde la moyenne sur 7 jours, pas le chiffre du jour.</div>`;
+const weightSettings = () => `<div class="sec-title"><h2 class="disp">Réglages</h2></div>
+  <div class="card pad"><div class="wform" style="grid-template-columns:1fr 1fr">
+    <div class="field"><label for="wg-goal">Objectif (kg)</label><input id="wg-goal" inputmode="decimal" value="${esc(String(DB.settings.goalKg ?? 77).replace(".", ","))}"></div>
+    <div class="field"><label for="wg-start">Départ (kg)</label><input id="wg-start" inputmode="decimal" value="${DB.settings.startKg ? esc(String(DB.settings.startKg).replace(".", ",")) : ""}" placeholder="1re pesée"></div>
+  </div><button class="btn sec block" data-act="wgoal">Enregistrer</button></div>`;
+function saveWeight() {
+  const kg = num($("#wg-kg").value || ""), date = $("#wg-date").value, waist = num($("#wg-waist").value || "");
+  const err = $("#wg-err"); const fail = m => { err.hidden = false; err.textContent = "⚠ " + m; };
+  if (kg == null || Number.isNaN(kg) || kg < 30 || kg > 250) return fail("Indique ton poids en kg (ex. 84,6).");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > isoDay()) return fail("Date invalide.");
+  if (waist != null && (Number.isNaN(waist) || waist < 40 || waist > 200)) return fail("Tour de taille invalide (en cm).");
+  const ex = DB.weights.find(x => !x.deleted && x.date === date);
+  if (ex) { const old = { kg: ex.kg, waist: ex.waist }; ex.kg = Math.round(kg * 100) / 100; ex.waist = waist; markDirty(ex); saveNow(); render();
+    toast("Pesée du " + fmtShort(date) + " mise à jour", () => { ex.kg = old.kg; ex.waist = old.waist; markDirty(ex); saveNow(); render(); }); return; }
+  const rec = { id: uid(), date, kg: Math.round(kg * 100) / 100, waist };
+  markDirty(rec); DB.weights.push(rec);
+  if (!DB.settings.startKg && wgLive().length === 1) { DB.settings.startKg = rec.kg; DB.settings.profileUpdatedAt = new Date().toISOString(); DB.settings.profileDirty = true; }
+  saveNow(); render(); toast("Pesée enregistrée ✓");
+}
 /* ───────────── Réglages & sauvegardes ───────────── */
 function vSettings() {
   const del = DB.workouts.filter(w => w.deleted);
   return `<header class="top"><button class="back" data-go="#/">${I.back}Accueil</button></header>
     <h1 class="disp" style="font-size:40px;margin-bottom:6px">Réglages</h1>
-    <p class="mut" style="font-size:14px;margin:0 0 18px">${live().length} séance(s) enregistrée(s) dans <b>ce navigateur</b>${storageOK ? "" : " — ⚠ stockage indisponible"}.</p>
+    <p class="mut" style="font-size:14px;margin:0 0 18px">${live().length} séance(s) et ${wgLive().length} pesée(s) dans <b>ce navigateur</b> (${esc(location.host || "fichier local")})${storageOK ? "" : " — ⚠ stockage indisponible"}.</p>
     <div class="card">
       <button class="set-item" data-act="export">${I.dl}<div><b>Exporter une sauvegarde</b><small>Fichier .json avec tout ton historique. À faire régulièrement.</small></div></button>
       <label class="set-item" style="cursor:pointer">${I.ul}<div><b>Importer une sauvegarde</b><small>Fusionne sans doublon (V5 ou ancien fichier V4).</small></div><input type="file" accept="application/json,.json" id="imp" class="sr"></label>
       <label class="set-item" style="cursor:pointer"><span style="width:22px"></span><div><b>Minuteur de repos automatique</b><small>Se lance quand tu valides une série.</small></div>
         <input type="checkbox" id="autorest" ${DB.settings.autoRest ? "checked" : ""} style="width:24px;height:24px;accent-color:#fff"></label>
     </div>
-    <div class="card pad" style="margin-top:14px;display:flex;gap:14px">${I.cloud}<div><b>Synchronisation téléphone ↔ ordinateur</b>
-      <p class="mut" style="font-size:13px;margin:6px 0 0">Étape 2 du projet (compte Supabase gratuit). En attendant, tes données restent dans ce navigateur : sur iPhone, utilise toujours l'app installée sur l'écran d'accueil et exporte une sauvegarde chaque semaine.</p></div></div>
+    <div class="sec-title"><h2 class="disp">Synchronisation</h2>${syncBadge(true)}</div>
+    ${syncPanel()}
     ${del.length ? `<div class="sec-title"><h2 class="disp">Corbeille</h2></div><div class="card" style="padding:4px 16px">${del.map(w => `<div class="pr"><span>${esc(SES[w.session].nom)} · ${esc(fmtShort(w.date))}</span><button class="chip" data-act="restore" data-id="${w.id}">Restaurer</button></div>`).join("")}</div>` : ""}
     <div class="sec-title"><h2 class="disp">Zone sensible</h2></div>
     <button class="btn ghost block" data-act="wipe">${I.trash}Tout effacer de ce navigateur</button>
     <div class="credits">
-      Version ${APP_VERSION}.<br>
+      Version ${APP_VERSION}.${localStorage.getItem("mpf.backup.v5") ? ` <button class="chip" data-act="dl-backup" style="height:24px">Copie de sécurité V5</button>` : ""}<br>
       Photos : <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">free-exercise-db</a> (dédiées au domaine public, licence Unlicense), converties en noir et blanc.<br>
+      Synchronisation : <a href="https://github.com/supabase/supabase-js" target="_blank" rel="noopener">supabase-js</a> (licence MIT).<br>
       Planches anatomiques : tracés de <a href="https://github.com/HichamELBSI/react-native-body-highlighter" target="_blank" rel="noopener">react-native-body-highlighter</a> (licence MIT, © 2022 ELABBASSI Hicham), recolorés.<br>
       Les conseils ne remplacent pas l'avis d'un coach ou d'un professionnel de santé.
     </div>`;
 }
 function doExport() {
-  const data = { app: "mon-programme-fitness", version: 5, exportedAt: new Date().toISOString(), workouts: DB.workouts, draft: DB.draft };
+  const data = { app: "mon-programme-fitness", version: 6, exportedAt: new Date().toISOString(), workouts: DB.workouts, weights: DB.weights, settings: DB.settings, draft: DB.draft };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
   a.href = url; a.download = `programme-fitness-${isoDay()}.json`; document.body.appendChild(a); a.click(); a.remove();
@@ -569,12 +840,25 @@ function fingerprint(w) { return [w.session, w.date, JSON.stringify(w.entries)].
 function mergeWorkouts(list) {
   let added = 0, updated = 0, skipped = 0;
   const fps = new Set(DB.workouts.map(fingerprint));
-  for (const w of list) {
-    if (!w || !w.id || !w.entries || !SES[w.session]) { skipped++; continue; }
+  for (const w0 of list) {
+    if (!w0 || !w0.id || !w0.entries || !SES[w0.session]) { skipped++; continue; }
+    const w = { ...w0 }; delete w.syncedAt; delete w._v;
     const i = DB.workouts.findIndex(x => x.id === w.id);
-    if (i >= 0) { if ((w.updatedAt || "") > (DB.workouts[i].updatedAt || "")) { DB.workouts[i] = w; updated++; } else skipped++; }
+    if (i >= 0) { if ((w.updatedAt || "") > (DB.workouts[i].updatedAt || "")) { const keep = DB.workouts[i].syncedAt; DB.workouts[i] = w; w.syncedAt = keep; w.dirty = true; w._v = 1; updated++; } else skipped++; }
     else if (fps.has(fingerprint(w))) skipped++;
-    else { DB.workouts.push(w); fps.add(fingerprint(w)); added++; }
+    else { w.dirty = true; w._v = 1; DB.workouts.push(w); fps.add(fingerprint(w)); added++; }
+  }
+  return { added, updated, skipped };
+}
+function mergeWeights(list) {
+  let added = 0, updated = 0, skipped = 0;
+  for (const x0 of list || []) {
+    if (!x0 || !x0.id || !x0.date || !(num(x0.kg) > 0)) { skipped++; continue; }
+    const x = { ...x0 }; delete x.syncedAt; delete x._v;
+    const i = DB.weights.findIndex(y => y.id === x.id);
+    if (i >= 0) { if ((x.updatedAt || "") > (DB.weights[i].updatedAt || "")) { const keep = DB.weights[i].syncedAt; DB.weights[i] = x; x.syncedAt = keep; x.dirty = true; x._v = 1; updated++; } else skipped++; }
+    else if (DB.weights.some(y => !y.deleted && y.date === x.date && num(y.kg) === num(x.kg))) skipped++;
+    else { x.dirty = true; x._v = 1; DB.weights.push(x); added++; }
   }
   return { added, updated, skipped };
 }
@@ -602,15 +886,176 @@ function doImport(file) {
     try {
       const d = JSON.parse(r.result);
       let res;
-      if (Array.isArray(d.workouts)) res = mergeWorkouts(d.workouts);
+      if (Array.isArray(d.workouts)) { res = mergeWorkouts(d.workouts); const r2 = mergeWeights(d.weights); res.added += r2.added; res.updated += r2.updated; res.skipped += r2.skipped;
+        if (d.settings && d.settings.goalKg && (!DB.settings.profileUpdatedAt || (d.settings.profileUpdatedAt || "") > DB.settings.profileUpdatedAt)) { DB.settings.goalKg = d.settings.goalKg; DB.settings.startKg = d.settings.startKg ?? DB.settings.startKg; DB.settings.profileUpdatedAt = d.settings.profileUpdatedAt || new Date().toISOString(); DB.settings.profileDirty = true; } }
       else if (Array.isArray(d.entries)) res = mergeWorkouts(fromV4(d));
       else throw new Error("format");
-      saveNow(); render();
+      saveNow(); render(); scheduleSync();
       toast(`Import : ${res.added} ajoutée(s), ${res.updated} mise(s) à jour, ${res.skipped} ignorée(s)`);
     } catch (e) { toast("Fichier non reconnu : choisis un export .json de l'application."); }
   };
   r.readAsText(file);
 }
+
+/* ───────────── Synchronisation (Supabase) ─────────────
+   Principe : chaque appareil garde tout en local. Quand tu es connecté :
+   1) on récupère ce qui a changé dans ton compte depuis la dernière fois ;
+   2) on envoie ce qui a changé ici.
+   Si la même séance a été modifiée des deux côtés, on garde les DEUX versions
+   (la tienne est marquée « conflit ») : rien n'est écrasé en silence. */
+const CFG = window.MPF_CONFIG || {};
+const syncCfg = () => { const u = (CFG.supabaseUrl || DB.sync.url || "").trim(), k = (CFG.supabaseKey || DB.sync.key || "").trim(); return u && k ? { u, k } : null; };
+let SB = null, syncing = false, syncT = null, lastVisSync = 0;
+const loadScript = src => new Promise((ok, ko) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => ko(new Error("script")); document.head.appendChild(s); });
+async function remote() {
+  if (window.__mpfFakeRemote) return window.__mpfFakeRemote;
+  const c = syncCfg(); if (!c) return null;
+  if (!SB) {
+    if (!window.supabase) await loadScript("vendor/supabase-2.117.2.js");
+    SB = window.supabase.createClient(c.u, c.k, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storageKey: "mpf.auth" } });
+  }
+  const C = SB;
+  const all = async (t, since) => {
+    let out = [], from = 0;
+    for (;;) {
+      let q = C.from(t).select("*").order("updated_at", { ascending: true }).range(from, from + 999);
+      if (since) q = q.gt("updated_at", since);
+      const { data, error } = await q; if (error) throw error;
+      out = out.concat(data); if (data.length < 1000) return out; from += 1000;
+    }
+  };
+  return {
+    async user() { const { data } = await C.auth.getSession(); return data.session ? data.session.user : null; },
+    async signIn(email, password) { const { data, error } = await C.auth.signInWithPassword({ email, password }); if (error) throw error; return data.user; },
+    async signUp(email, password) { const { data, error } = await C.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; return data; },
+    async signOut() { await C.auth.signOut(); },
+    select: all,
+    async upsert(t, rows, onConflict = "id") { const { data, error } = await C.from(t).upsert(rows, { onConflict }).select(onConflict + ",updated_at"); if (error) throw error; return data; }
+  };
+}
+const stripSync = o => { const x = { ...o }; delete x.dirty; delete x._v; delete x.syncedAt; return x; };
+const sameW = (a, b) => JSON.stringify([a.session, a.date, !!a.deleted, a.entries, a.cardio || {}, a.note || ""]) === JSON.stringify([b.session, b.date, !!b.deleted, b.entries, b.cardio || {}, b.note || ""]);
+const sameG = (a, b) => a.date === b.date && num(a.kg) === num(b.kg) && (num(a.waist) || null) === (num(b.waist) || null) && !!a.deleted === !!b.deleted;
+const TABLES = {
+  workouts: { list: () => DB.workouts, toR: w => ({ id: w.id, session: w.session, date: w.date, deleted: !!w.deleted, data: stripSync(w) }),
+    fromR: r => ({ ...r.data, id: r.id, session: r.session, date: r.date, deleted: !!r.deleted, status: "done", syncedAt: r.updated_at, dirty: false }), same: sameW,
+    pending: () => DB.workouts.filter(w => w.dirty && w.status === "done") },
+  weights: { list: () => DB.weights, toR: x => ({ id: x.id, date: x.date, kg: num(x.kg), waist: num(x.waist) || null, deleted: !!x.deleted, client_updated_at: x.updatedAt || new Date().toISOString() }),
+    fromR: r => ({ id: r.id, date: r.date, kg: Number(r.kg), waist: r.waist == null ? null : Number(r.waist), deleted: !!r.deleted, updatedAt: r.client_updated_at || r.updated_at, syncedAt: r.updated_at, dirty: false }), same: sameG,
+    pending: () => DB.weights.filter(x => x.dirty) }
+};
+function applyRemote(T, r, stats) {
+  const list = T.list(); const inc = T.fromR(r); const i = list.findIndex(x => x.id === r.id);
+  if (i < 0) { list.push(inc); stats.down++; return; }
+  const l = list[i];
+  if (!l.dirty) { list[i] = inc; stats.down++; return; }
+  if (l.syncedAt === r.updated_at) return; // c'est notre propre envoi
+  if (T.same(l, inc)) { l.syncedAt = r.updated_at; l.dirty = false; return; }
+  // conflit : modifié ici ET ailleurs → on garde les deux
+  const copy = { ...JSON.parse(JSON.stringify(l)), id: uid(), syncedAt: null, conflict: true, dirty: true, _v: 1 };
+  if (copy.entries) copy.note = "⚠ Copie en conflit (modifiée sur deux appareils). " + (copy.note || "");
+  list[i] = inc; list.push(copy); stats.conflicts++;
+}
+async function syncNow(manual) {
+  if (syncing) return;
+  let R; try { R = await remote(); } catch (e) { DB.sync.lastError = "Module de synchronisation indisponible (hors ligne ?)"; return; }
+  if (!R) return;
+  if (!navigator.onLine) { DB.sync.lastError = null; DB.sync.offline = true; refreshSyncUI(); return; }
+  DB.sync.offline = false;
+  syncing = true; refreshSyncUI();
+  const stats = { up: 0, down: 0, conflicts: 0 };
+  try {
+    const user = await R.user();
+    if (!user) { DB.sync.userId = null; return; }
+    if (DB.sync.userId && DB.sync.userId !== user.id) { DB.sync.cursor = {}; for (const w of DB.workouts) w.dirty = true; for (const x of DB.weights) x.dirty = true; }
+    DB.sync.userId = user.id; DB.sync.email = user.email;
+    // 1) réception
+    for (const t of Object.keys(TABLES)) {
+      const rows = await R.select(t, DB.sync.cursor[t]);
+      for (const r of rows) { applyRemote(TABLES[t], r, stats); if (!DB.sync.cursor[t] || r.updated_at > DB.sync.cursor[t]) DB.sync.cursor[t] = r.updated_at; }
+    }
+    const prof = (await R.select("profil")).find(p => p.user_id === user.id);
+    if (prof && !DB.settings.profileDirty && prof.updated_at !== DB.settings.profileSyncedAt) {
+      if (prof.goal_kg != null) DB.settings.goalKg = Number(prof.goal_kg);
+      if (prof.start_kg != null) DB.settings.startKg = Number(prof.start_kg);
+      DB.settings.profileSyncedAt = prof.updated_at;
+    }
+    // 2) envoi
+    for (const t of Object.keys(TABLES)) {
+      const T = TABLES[t]; const pend = T.pending(); if (!pend.length) continue;
+      for (let k = 0; k < pend.length; k += 200) {
+        const chunk = pend.slice(k, k + 200); const vers = new Map(chunk.map(x => [x.id, x._v]));
+        const res = await R.upsert(t, chunk.map(T.toR));
+        for (const r of res) { const rec = T.list().find(x => x.id === r.id); if (!rec) continue; rec.syncedAt = r.updated_at; if (rec._v === vers.get(r.id)) rec.dirty = false; stats.up++; }
+      }
+    }
+    if (DB.settings.profileDirty) {
+      const res = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null }], "user_id");
+      DB.settings.profileDirty = false; if (res[0]) DB.settings.profileSyncedAt = res[0].updated_at;
+    }
+    DB.sync.lastAt = new Date().toISOString(); DB.sync.lastError = null;
+    if (stats.conflicts) setTimeout(() => toast(`${stats.conflicts} conflit(s) : les deux versions sont gardées (badge « conflit »).`), 50);
+    else if (manual) setTimeout(() => toast(`Synchronisé ✓ (${stats.up} envoyé(s), ${stats.down} reçu(s))`), 50);
+  } catch (e) {
+    DB.sync.lastError = frErr(e);
+  } finally {
+    syncing = false; saveNow();
+    const r = route().name; const busy = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+    if (!busy && ["home", "hist", "prog2", "poids", "set", "hd"].includes(r) && !$(".sheet-bg")) render(true); else refreshSyncUI();
+  }
+}
+function frErr(e) {
+  const m = String((e && (e.message || e.error_description || e.msg)) || e);
+  if (/Invalid login credentials/i.test(m)) return "E-mail ou mot de passe incorrect.";
+  if (/Email not confirmed/i.test(m)) return "Confirme d'abord ton adresse : clique sur le lien reçu par e-mail.";
+  if (/already registered|already exists/i.test(m)) return "Ce compte existe déjà : utilise « Se connecter ».";
+  if (/Password should be/i.test(m)) return "Mot de passe trop court (8 caractères minimum conseillés).";
+  if (/Signups not allowed/i.test(m)) return "Les nouvelles inscriptions sont désactivées pour ce projet.";
+  if (/relation .* does not exist|Could not find the table/i.test(m)) return "Les tables n'existent pas encore : exécute le fichier supabase/schema.sql.";
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return "Pas de connexion au serveur. Réessaie avec du réseau.";
+  if (/Invalid API key|No API key/i.test(m)) return "Clé du projet invalide : vérifie l'URL et la clé publique.";
+  return m.slice(0, 160);
+}
+function scheduleSync(ms = 1500) { if (!syncCfg() && !window.__mpfFakeRemote) return; clearTimeout(syncT); syncT = setTimeout(() => syncNow(false), ms); }
+function pendingCount() { return DB.workouts.filter(w => w.dirty && w.status === "done").length + DB.weights.filter(x => x.dirty).length + (DB.settings.profileDirty ? 1 : 0); }
+function ago(iso) { const s = (Date.now() - new Date(iso)) / 1000; if (s < 60) return "à l'instant"; if (s < 3600) return `il y a ${Math.round(s / 60)} min`; if (s < 86400) return `il y a ${Math.round(s / 3600)} h`; return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); }
+function syncBadge(small) {
+  const on = (syncCfg() || window.__mpfFakeRemote) && DB.sync.userId; const p = pendingCount();
+  let t, cls = "";
+  if (!on) { if (small !== true) return ""; t = "Local"; cls = "off"; }
+  else if (syncing) t = "Synchro…";
+  else if (DB.sync.lastError) { t = "Erreur synchro"; cls = "err"; }
+  else if (DB.sync.offline || !navigator.onLine) { t = p ? `Hors ligne · ${p} en attente` : "Hors ligne"; cls = "off"; }
+  else if (p) t = `${p} en attente`;
+  else t = DB.sync.lastAt ? "Synchronisé" : "Connecté";
+  return `<a class="sbadge ${cls}" href="#/reglages" data-sync-badge>${I.cloud}<span>${t}</span></a>`;
+}
+function refreshSyncUI() { $$("[data-sync-badge]").forEach(b => { const t = document.createElement("div"); t.innerHTML = syncBadge(true); if (t.firstElementChild) b.replaceWith(t.firstElementChild); }); const sp = $("#syncpanel"); if (sp) sp.outerHTML = syncPanel(); }
+function syncPanel() {
+  const c = syncCfg();
+  if (!c && !window.__mpfFakeRemote) return `<div class="card pad" id="syncpanel">
+    <p class="mut" style="font-size:14px;margin:0 0 12px">Relie l'appli à ton compte <b>Supabase</b> (gratuit) pour retrouver les mêmes séances et pesées sur ton iPhone et ton ordinateur. Les étapes sont dans le README du projet.</p>
+    <div class="field"><label for="sb-url">URL du projet</label><input id="sb-url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://xxxx.supabase.co" value="${esc(DB.sync.url)}"></div>
+    <div class="field"><label for="sb-key">Clé publique (publishable / anon)</label><input id="sb-key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sb_publishable_…" value="${esc(DB.sync.key)}"></div>
+    <p class="dim" style="font-size:12px;margin:0 0 12px">Ne colle jamais la clé « secret » ou « service_role » ici.</p>
+    <button class="btn sec block" data-act="sb-save">Enregistrer</button></div>`;
+  const err = DB.sync.lastError ? `<div class="note-box" style="margin-bottom:12px">⚠ ${esc(DB.sync.lastError)}</div>` : "";
+  if (!DB.sync.userId) return `<div class="card pad" id="syncpanel">${err}
+    <p class="mut" style="font-size:14px;margin:0 0 12px">Connecte-toi avec le même compte sur chaque appareil. Tes données locales seront envoyées dans ton compte, sans rien effacer.</p>
+    <div class="field"><label for="sb-email">E-mail</label><input id="sb-email" type="email" autocomplete="username" autocapitalize="off" value="${esc(DB.sync.email || "")}"></div>
+    <div class="field"><label for="sb-pw">Mot de passe</label><input id="sb-pw" type="password" autocomplete="current-password"></div>
+    <div class="row2"><button class="btn pri" data-act="sb-in">Se connecter</button><button class="btn sec" data-act="sb-up">Créer mon compte</button></div>
+    ${CFG.supabaseUrl ? "" : `<button class="btn ghost sm block" style="margin-top:10px" data-act="sb-reset">Changer de projet Supabase</button>`}</div>`;
+  const p = pendingCount();
+  return `<div class="card pad" id="syncpanel">${err}
+    <div class="pr" style="border:0;padding-top:0"><span>Compte</span><b>${esc(DB.sync.email || "")}</b></div>
+    <div class="pr"><span>Dernière synchro</span><b>${DB.sync.lastAt ? ago(DB.sync.lastAt) : "jamais"}</b></div>
+    <div class="pr"><span>En attente d'envoi</span><b>${p}</b></div>
+    <div class="row2" style="margin-top:12px"><button class="btn pri" data-act="sb-sync" ${syncing ? "disabled" : ""}>${syncing ? "Synchro…" : "Synchroniser"}</button><button class="btn ghost" data-act="sb-out">Se déconnecter</button></div>
+    <p class="dim" style="font-size:12px;margin:10px 0 0">La synchro se fait toute seule : à l'ouverture, après chaque séance ou pesée, et au retour du réseau. Se déconnecter n'efface rien sur cet appareil.</p></div>`;
+}
+addEventListener("online", () => scheduleSync(300));
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastVisSync > 60000) { lastVisSync = Date.now(); scheduleSync(500); } });
 
 /* ───────────── Minuteur de repos ───────────── */
 const rest = { end: 0, total: 0, t: null };
@@ -653,26 +1098,28 @@ function route() {
   if (a === "historique" && b && c === "modifier") return { name: "edit", id: b };
   if (a === "historique" && b) return { name: "hd", id: b };
   if (a === "historique") return { name: "hist" };
-  if (a === "progres") return { name: "prog2", q: b };
+  if (a === "progres") return { name: "prog2", q: b, m: c };
+  if (a === "poids") return { name: "poids", r: b };
   if (a === "reglages") return { name: "set" };
   return { name: "404" };
 }
 function vNotFound() { return `<div class="empty"><div class="disp">Introuvable</div><a class="btn sec" href="#/">Retour à l'accueil</a></div>`; }
 let clockT;
-function render() {
-  const r = route(); closeSheet();
-  const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q), set: vSettings };
+function render(keepScroll) {
+  const r = route(); if (keepScroll !== true) closeSheet(); const y = scrollY;
+  const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q, r.m), poids: () => vWeight(r.r), set: vSettings };
   view.innerHTML = (map[r.name] || vNotFound)();
-  const navKey = r.name === "ex" ? "prog" : r.name === "hd" || r.name === "edit" ? "hist" : r.name;
+  const navKey = r.name === "ex" ? "prog" : ["hd", "edit", "hist"].includes(r.name) ? "prog2" : r.name;
   $("#nav").innerHTML = navHTML(navKey);
   if (r.name !== "edit" && DB.editBuf) { DB.editBuf = null; save(); }
   clearInterval(clockT);
   if (r.name === "wk" && DB.draft) { const tick = () => { const c = $("#clock"); if (!c) return; const m = Math.floor((Date.now() - new Date(DB.draft.startedAt)) / 60000); c.textContent = m < 60 ? m + " min" : Math.floor(m / 60) + " h " + pad2(m % 60); }; tick(); clockT = setInterval(tick, 20000); }
   const gal = $("#gal"); if (gal) gal.addEventListener("scroll", () => { const i = Math.round(gal.scrollLeft / gal.clientWidth); $$("#dots i").forEach((d, k) => d.classList.toggle("on", k === i)); }, { passive: true });
   const sel = $("#exsel"); if (sel) sel.onchange = () => { location.hash = "#/progres/" + sel.value; };
+  const wk = $("#wg-kg"); if (wk) wk.onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); saveWeight(); } };
   const imp = $("#imp"); if (imp) imp.onchange = () => imp.files[0] && doImport(imp.files[0]);
   const ar = $("#autorest"); if (ar) ar.onchange = () => { DB.settings.autoRest = ar.checked; saveNow(); };
-  if (!["wk", "edit"].includes(r.name)) window.scrollTo(0, 0);
+  if (keepScroll === true) window.scrollTo(0, y); else if (!["wk", "edit"].includes(r.name)) window.scrollTo(0, 0);
 }
 addEventListener("hashchange", render);
 
@@ -713,14 +1160,48 @@ function handleAct(ev) {
     case "edit-save": editSave(); break;
     case "del": {
       const id = el.dataset.id; const x = DB.workouts.find(y => y.id === id); if (!x) break;
-      x.deleted = true; x.updatedAt = new Date().toISOString(); saveNow(); location.hash = "#/historique";
-      setTimeout(() => toast("Séance déplacée dans la corbeille", () => { x.deleted = false; x.updatedAt = new Date().toISOString(); saveNow(); render(); }), 50); break;
+      x.deleted = true; markDirty(x); saveNow(); location.hash = "#/historique";
+      setTimeout(() => toast("Séance déplacée dans la corbeille", () => { x.deleted = false; markDirty(x); saveNow(); render(); }), 50); break;
     }
-    case "restore": { const x = DB.workouts.find(y => y.id === el.dataset.id); if (x) { x.deleted = false; x.updatedAt = new Date().toISOString(); saveNow(); render(); toast("Séance restaurée ✓"); } break; }
+    case "restore": { const x = DB.workouts.find(y => y.id === el.dataset.id); if (x) { x.deleted = false; markDirty(x); saveNow(); render(); toast("Séance restaurée ✓"); } break; }
     case "export": doExport(); break;
-    case "wipe": sheet(`<h2 class="disp">Tout effacer ?</h2><p>Cela supprime définitivement les ${DB.workouts.length} séance(s) de ce navigateur. Exporte une sauvegarde avant si tu as un doute.</p>
+    case "wsave": saveWeight(); break;
+    case "wdel": { const x = DB.weights.find(y => y.id === el.dataset.id); if (!x) break; x.deleted = true; markDirty(x); saveNow(); render(true);
+      toast("Pesée supprimée", () => { x.deleted = false; markDirty(x); saveNow(); render(true); }); break; }
+    case "wgoal": {
+      const g = num($("#wg-goal").value), s0 = $("#wg-start").value.trim() === "" ? null : num($("#wg-start").value);
+      if (!(g >= 30 && g <= 250) || (s0 != null && !(s0 >= 30 && s0 <= 250))) { toast("Valeurs invalides (entre 30 et 250 kg)."); break; }
+      DB.settings.goalKg = g; DB.settings.startKg = s0; DB.settings.profileUpdatedAt = new Date().toISOString(); DB.settings.profileDirty = true; saveNow(); scheduleSync(); render(true); toast("Objectif enregistré ✓"); break;
+    }
+    case "sb-save": {
+      const u = $("#sb-url").value.trim().replace(/\/+$/, ""), k = $("#sb-key").value.trim();
+      if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)) { toast("URL attendue : https://xxxx.supabase.co"); break; }
+      let isSecret = /service_role|sb_secret_/i.test(k);
+      if (!isSecret && k.split(".").length === 3) { try { isSecret = /service_role/.test(atob(k.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch (e) {} }
+      if (isSecret) { toast("Ceci est une clé SECRÈTE : ne l'utilise jamais dans l'appli. Prends la clé publique."); break; }
+      if (k.length < 20) { toast("Clé publique invalide."); break; }
+      DB.sync.url = u; DB.sync.key = k; SB = null; saveNow(); render(true); break;
+    }
+    case "sb-reset": DB.sync.url = ""; DB.sync.key = ""; DB.sync.userId = null; DB.sync.cursor = {}; SB = null; saveNow(); render(true); break;
+    case "sb-in": case "sb-up": {
+      const email = $("#sb-email").value.trim(), pw = $("#sb-pw").value;
+      if (!/^\S+@\S+\.\S+$/.test(email) || pw.length < 6) { toast("Indique ton e-mail et un mot de passe (8 caractères ou plus)."); break; }
+      el.disabled = true; DB.sync.email = email;
+      (async () => {
+        try {
+          const R = await remote();
+          if (act === "sb-up") { const d = await R.signUp(email, pw); if (!d.session) { DB.sync.lastError = null; saveNow(); render(true); sheet(`<h2 class="disp">Vérifie tes e-mails</h2><p>Un lien de confirmation a été envoyé à <b>${esc(email)}</b>. Clique dessus, puis reviens ici et touche « Se connecter ».</p><div class="btns"><button class="btn pri" data-close>Compris</button></div>`); return; } }
+          else await R.signIn(email, pw);
+          DB.sync.lastError = null; await syncNow(true);
+        } catch (e) { DB.sync.lastError = frErr(e); saveNow(); render(true); }
+      })(); break;
+    }
+    case "sb-sync": syncNow(true); break;
+    case "sb-out": (async () => { try { const R = await remote(); await R.signOut(); } catch (e) {} DB.sync.userId = null; DB.sync.lastError = null; saveNow(); render(true); toast("Déconnecté. Tes données restent sur cet appareil."); })(); break;
+    case "dl-backup": { const raw = localStorage.getItem("mpf.backup.v5"); if (!raw) break; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([raw], { type: "application/json" })); a.download = "programme-fitness-copie-v5.json"; document.body.appendChild(a); a.click(); a.remove(); break; }
+    case "wipe": sheet(`<h2 class="disp">Tout effacer ?</h2><p>Cela supprime les ${DB.workouts.length} séance(s) et ${DB.weights.length} pesée(s) de ce navigateur. Ce qui est déjà synchronisé dans ton compte reste dans le cloud et reviendra à la prochaine connexion. Exporte une sauvegarde avant si tu as un doute.</p>
       <div class="btns"><button class="btn ghost" data-act="export">Exporter d'abord</button><button class="btn pri" data-act="wipe-ok">Effacer définitivement</button><button class="btn ghost" data-close>Annuler</button></div>`); break;
-    case "wipe-ok": DB = blankDB(); saveNow(); closeSheet(); render(); toast("Données effacées."); break;
+    case "wipe-ok": { const keep = DB.sync; DB = blankDB(); DB.sync = { ...DB.sync, url: keep.url, key: keep.key }; saveNow(); } closeSheet(); render(); toast("Données effacées."); break;
   }
 }
 view.addEventListener("click", handleAct);
@@ -755,6 +1236,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
   }).catch(() => {});
 }
 
-window.__mpf = { get db() { return DB; }, version: APP_VERSION };
+window.__mpf = { get db() { return DB; }, version: APP_VERSION, syncNow };
 render();
+scheduleSync(800);
 })();

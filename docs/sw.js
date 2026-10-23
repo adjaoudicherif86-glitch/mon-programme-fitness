@@ -1,13 +1,15 @@
 /* Service worker : rend l'app disponible hors connexion (après une première visite en ligne).
    IMPORTANT : à chaque mise à jour du code, change VERSION ci-dessous. Tes données ne sont pas touchées. */
-const VERSION = "mpf-5.0.0";
+const VERSION = "mpf-6.0.0";
 const SHELL = [
   "./",
   "index.html",
-  "app.css?v=5.0.0",
-  "app.js?v=5.0.0",
-  "data.js?v=5.0.0",
-  "anatomy-data.js?v=5.0.0",
+  "app.css?v=6.0.0",
+  "app.js?v=6.0.0",
+  "config.js?v=6.0.0",
+  "data.js?v=6.0.0",
+  "vendor/supabase-2.117.2.js",
+  "anatomy-data.js?v=6.0.0",
   "manifest.webmanifest",
   "fonts/archivo.woff2",
   "icons/icon-192.png",
@@ -62,7 +64,8 @@ self.addEventListener("fetch", e => {
     e.respondWith(caches.open("mpf-fonts").then(c => c.match(req).then(hit => hit || fetch(req).then(r => { c.put(req, r.clone()); return r; }))));
     return;
   }
-  if (url.origin !== location.origin) return;
+  if (url.origin !== location.origin) return; // Supabase (API) : jamais mis en cache
+  if (url.pathname.endsWith("config.js")) { e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); return r; }).catch(() => caches.match(req, { ignoreSearch: true }))); return; }
   if (req.mode === "navigate") {
     e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put("./", cp)); return r; }).catch(() => caches.match("./")));
     return;

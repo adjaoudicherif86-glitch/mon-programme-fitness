@@ -7,7 +7,10 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
 - **Enregistrement des séries** : charge, répétitions, statut fait / non fait, note par exercice, date. La dernière performance est affichée à côté de chaque série et proposée automatiquement la fois suivante.
 - **Sauvegarde automatique** à chaque saisie : tu peux fermer l'appli en pleine séance et la reprendre.
 - **Historique** daté, modifiable, avec corbeille (rien n'est écrasé ni supprimé sans confirmation).
-- **Progrès** : volume par semaine, courbe de charge par exercice, records.
+- **Progrès** : assiduité sur 4 semaines, semaines complètes d'affilée, records battus en 30 jours, calendrier des 12 dernières semaines, carte des muscles travaillés dans la semaine, volume par semaine, et par exercice : charge max, 1RM estimé, volume, progression en %.
+- **Coach de progression** (double progression) : quand tu fais le haut de la fourchette sur toutes les séries, l'appli te dit de monter d'un cran ; sinon elle te donne les répétitions à viser. Elle signale aussi 3 séances sans progrès.
+- **Poids** : pesées, moyenne sur 7 jours, tendance par semaine, reste à perdre jusqu'à **77 kg**, date d'arrivée estimée, tour de taille facultatif.
+- **Synchronisation iPhone ↔ ordinateur** avec un compte Supabase gratuit (facultatif).
 - **Minuteur de repos** qui démarre quand tu valides une série.
 - **Cardio** : marche inclinée 15–20 min avec 3 niveaux.
 - **Installable sur l'écran d'accueil** de l'iPhone (PWA) et utilisable sans réseau une fois ouverte une première fois.
@@ -44,21 +47,30 @@ Pour la planche, la colonne « sec » sert à noter la durée tenue. Pour les di
 
 ## Où sont mes données ? (important)
 
-Tes séances sont enregistrées **dans le navigateur de l'appareil** (stockage local). Concrètement :
+Chaque appareil garde **toutes** tes données dans son navigateur, même sans réseau. Attention : l'appli installée sur l'iPhone, Safari sur ton ordinateur et l'aperçu ouvert dans Claude sont **trois endroits séparés**. Sans synchronisation, ce que tu notes sur l'un n'apparaît pas sur les autres.
 
-- Elles restent si tu fermes l'appli, éteins le téléphone ou mets l'appli à jour.
-- Elles ne passent **pas** toutes seules de ton iPhone à ton ordinateur.
-- Safari peut effacer les données d'un site qu'on n'ouvre plus pendant plusieurs semaines. L'appli installée sur l'écran d'accueil est mieux protégée, mais **exporte une sauvegarde chaque semaine** : icône ⚙ sur l'accueil → **Exporter une sauvegarde** → enregistre le fichier dans Fichiers / iCloud Drive.
-- Pour retrouver tes données sur un autre appareil : ⚙ → **Importer une sauvegarde**. L'import fusionne sans créer de doublon.
-- Ton ancien fichier de sauvegarde de la V4 (`mes-series-fitness.json`) s'importe de la même façon.
+- Les mises à jour de l'appli **n'effacent rien** : les données restent au même endroit, et la V6 garde en plus une copie de sécurité de tes données V5 (⚙ → bouton « Copie de sécurité V5 »).
+- Exporte une sauvegarde de temps en temps : ⚙ → **Exporter une sauvegarde**. L'import fusionne sans créer de doublon.
 
-**Étape suivante prévue :** synchronisation automatique iPhone ↔ ordinateur avec un compte Supabase gratuit (connexion sécurisée, une base de données privée à toi, aucune clé secrète dans le code).
+## Synchroniser l'iPhone et l'ordinateur (Supabase, gratuit, ~20 min une seule fois)
+
+1. Va sur https://supabase.com → **Start your project** → connecte-toi avec ton compte GitHub.
+2. **New project** : nom `mon-programme-fitness`, choisis un mot de passe de base de données (garde-le pour toi, l'appli n'en a pas besoin), région **Europe (Frankfurt ou Paris)**, offre **Free**. Attends 2 minutes.
+3. Menu de gauche **SQL Editor** → **New query** → colle **tout** le contenu du fichier `supabase/schema.sql` de ce dépôt → **Run**. Tu dois voir « Success ».
+4. **Authentication → URL Configuration** : dans **Site URL**, mets `https://adjaoudicherif86-glitch.github.io/mon-programme-fitness/`, et ajoute la même adresse dans **Redirect URLs**. Save.
+5. Bouton **Connect** (en haut) ou **Project Settings → API Keys** : copie le **Project URL** (`https://xxxx.supabase.co`) et la clé **publishable** (`sb_publishable_…`), ou la clé `anon` si c'est la seule proposée. Ces deux valeurs peuvent être publiques. **Ne copie jamais la clé « secret » ni « service_role ».**
+6. Colle-les dans `docs/config.js` (ou envoie-les à Claude pour qu'il le fasse). Tu peux aussi les coller dans l'appli : ⚙ → Synchronisation.
+7. **Commence par le téléphone** (c'est lui qui a tes séances) : ⚙ → Synchronisation → e-mail + mot de passe → **Créer mon compte** → clique sur le lien reçu par e-mail → reviens dans l'appli → **Se connecter**. Tes séances et pesées partent dans ton compte.
+8. Sur l'ordinateur : ouvre l'adresse de l'appli → ⚙ → **Se connecter** avec le même compte. Tout arrive.
+9. Sécurité : une fois ton compte créé, dans Supabase va dans **Authentication → Sign In / Providers** et désactive **Allow new users to sign up**. Personne d'autre ne pourra créer de compte sur ton projet.
+
+Comment ça marche : l'appli enregistre toujours d'abord sur l'appareil, puis envoie et reçoit les changements à l'ouverture, après chaque séance ou pesée, et quand le réseau revient. Si une même séance a été modifiée sur deux appareils avant la synchro, **les deux versions sont gardées** (badge « conflit ») : rien n'est écrasé en silence. Une séance en cours reste sur l'appareil où tu l'as commencée tant qu'elle n'est pas terminée. Chaque utilisateur ne peut lire que ses propres données (règles RLS dans `supabase/schema.sql`).
 
 ## Modifier le programme
 
 Tout le programme est dans `docs/data.js` (texte en français). Sur GitHub : ouvre le fichier → icône crayon ✏️ → modifie le texte entre guillemets (nom, séries, répétitions, consignes) → **Commit changes**. L'appli se met à jour en 1 à 3 minutes. Ton historique n'est pas touché.
 
-Si tu modifies le code, change aussi la ligne `const VERSION = "mpf-5.0.0";` dans `docs/sw.js` (par exemple `mpf-5.0.1`) : c'est ce qui dit aux téléphones de télécharger la nouvelle version. L'appli affichera « Nouvelle version disponible → Recharger ».
+Si tu modifies le code, change aussi la ligne `const VERSION = "mpf-6.0.0";` dans `docs/sw.js` (par exemple `mpf-6.0.1`) : c'est ce qui dit aux téléphones de télécharger la nouvelle version. L'appli affichera « Nouvelle version disponible → Recharger ».
 
 ## Organisation des fichiers
 
@@ -74,12 +86,17 @@ docs/
   icons/                icônes de l'application
   manifest.webmanifest  fiche d'installation (PWA)
   sw.js                 fonctionnement hors ligne
+  config.js             adresse + clé publique Supabase (synchro)
+  vendor/               bibliothèque supabase-js (hébergée ici)
+supabase/
+  schema.sql            tables, sécurité RLS, vue « series »
 ```
 
 ## Crédits et licences
 
 - **Photos des exercices** : [free-exercise-db](https://github.com/yuhonas/free-exercise-db), base dédiée au domaine public (licence Unlicense), converties en noir et blanc. Le dépôt ne documente pas le photographe d'origine ; si un ayant droit se manifeste, les photos seront remplacées.
 - **Planches anatomiques** : tracés de [react-native-body-highlighter](https://github.com/HichamELBSI/react-native-body-highlighter), licence MIT © 2022 ELABBASSI Hicham, découpés par muscle et recolorés.
+- **Synchronisation** : [supabase-js](https://github.com/supabase/supabase-js), licence MIT.
 - **Police** : [Archivo](https://github.com/Omnibus-Type/Archivo), SIL Open Font License 1.1.
 - Les vidéos sont des recherches YouTube ciblées (aucune vidéo n'est copiée dans l'appli).
 
