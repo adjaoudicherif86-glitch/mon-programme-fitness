@@ -1,15 +1,15 @@
 /* Service worker : rend l'app disponible hors connexion (après une première visite en ligne).
    IMPORTANT : à chaque mise à jour du code, change VERSION ci-dessous. Tes données ne sont pas touchées. */
-const VERSION = "mpf-6.0.0";
+const VERSION = "mpf-6.1.0";
 const SHELL = [
   "./",
   "index.html",
-  "app.css?v=6.0.0",
-  "app.js?v=6.0.0",
-  "config.js?v=6.0.0",
-  "data.js?v=6.0.0",
+  "app.css?v=6.1.0",
+  "app.js?v=6.1.0",
+  "config.js?v=6.1.0",
+  "data.js?v=6.1.0",
   "vendor/supabase-2.117.2.js",
-  "anatomy-data.js?v=6.0.0",
+  "anatomy-data.js?v=6.1.0",
   "manifest.webmanifest",
   "fonts/archivo.woff2",
   "icons/icon-192.png",

@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.0.0";
+const APP_VERSION = "6.1.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -907,8 +907,70 @@ const CFG = window.MPF_CONFIG || {};
 const syncCfg = () => { const u = (CFG.supabaseUrl || DB.sync.url || "").trim(), k = (CFG.supabaseKey || DB.sync.key || "").trim(); return u && k ? { u, k } : null; };
 let SB = null, syncing = false, syncT = null, lastVisSync = 0;
 const loadScript = src => new Promise((ok, ko) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => ko(new Error("script")); document.head.appendChild(s); });
+/* --- Variante GitHub : un fichier JSON dans un dépôt PRIVÉ, écrit avec un jeton limité à ce dépôt.
+   Le jeton reste sur l'appareil (jamais dans le code, jamais dans les exports). --- */
+const GH_DEFAULT_REPO = "adjaoudicherif86-glitch/mon-programme-fitness-data";
+const ghToken = () => { try { return localStorage.getItem("mpf.ghtoken") || ""; } catch (e) { return ""; } };
+const ghCfg = () => { const t = ghToken().trim(); return t ? { token: t, repo: (DB.sync.ghRepo || GH_DEFAULT_REPO).trim(), path: "carnet.json" } : null; };
+const syncOn = () => !!(window.__mpfFakeRemote || ghCfg() || syncCfg());
+function ghRemote(c) {
+  const API = window.__mpfGhApi || "https://api.github.com";
+  const H = { Authorization: "Bearer " + c.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+  const url = `${API}/repos/${c.repo}/contents/${c.path}`;
+  let doc = null, sha = null, changed = false;
+  const fail = async r => { const e = new Error("GH " + r.status + " " + (await r.text().catch(() => "")).slice(0, 140)); e.status = r.status; return e; };
+  const b64d = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, "")), ch => ch.charCodeAt(0)));
+  const b64e = s => { const by = new TextEncoder().encode(s); let bin = ""; for (let i = 0; i < by.length; i += 0x8000) bin += String.fromCharCode(...by.subarray(i, i + 0x8000)); return btoa(bin); };
+  return {
+    kind: "github",
+    async user() { return { id: "gh:" + c.repo.toLowerCase(), email: c.repo }; },
+    async check() {
+      const r = await fetch(`${API}/repos/${c.repo}`, { headers: H, cache: "no-store" });
+      if (!r.ok) throw await fail(r);
+      const j = await r.json();
+      if (!j.private) { const e = new Error("PUBLIC_REPO"); throw e; }
+      if (j.permissions && j.permissions.push === false) { const e = new Error("NO_WRITE"); throw e; }
+      return j;
+    },
+    async begin() {
+      changed = false;
+      const r = await fetch(url, { headers: H, cache: "no-store" });
+      if (r.status === 404) { doc = { app: "mon-programme-fitness", format: 1, workouts: [], weights: [], profil: null }; sha = null; return; }
+      if (!r.ok) throw await fail(r);
+      const j = await r.json(); sha = j.sha;
+      let txt;
+      if (j.content && j.encoding === "base64") txt = b64d(j.content);
+      else { const r2 = await fetch(url, { headers: { ...H, Accept: "application/vnd.github.raw+json" }, cache: "no-store" }); if (!r2.ok) throw await fail(r2); txt = await r2.text(); }
+      doc = JSON.parse(txt || "{}"); doc.workouts = doc.workouts || []; doc.weights = doc.weights || []; doc.profil = doc.profil || null;
+    },
+    async select(t) { if (t === "profil") return doc.profil ? [doc.profil] : []; return (doc[t] || []).slice(); },
+    async upsert(t, rows) {
+      const out = [];
+      for (const r of rows) {
+        const st = new Date().toISOString() + "~" + Math.random().toString(36).slice(2, 8);
+        const row = { ...r, updated_at: st };
+        if (t === "profil") { doc.profil = row; out.push({ user_id: r.user_id, updated_at: st }); continue; }
+        const i = doc[t].findIndex(x => x.id === r.id); if (i >= 0) doc[t][i] = row; else doc[t].push(row);
+        out.push({ id: r.id, updated_at: st });
+      }
+      changed = true; return out;
+    },
+    async commit() {
+      if (!changed) return; changed = false;
+      doc.updatedAt = new Date().toISOString();
+      const body = { message: "Synchro carnet " + new Date().toLocaleString("fr-FR"), content: b64e(JSON.stringify(doc)) };
+      if (sha) body.sha = sha;
+      const r = await fetch(url, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (r.status === 409 || r.status === 422) { const e = new Error("SHA_CONFLICT"); e.retry = true; throw e; }
+      if (!r.ok) throw await fail(r);
+      const j = await r.json(); sha = j.content && j.content.sha;
+    },
+    async signOut() { try { localStorage.removeItem("mpf.ghtoken"); } catch (e) {} }
+  };
+}
 async function remote() {
   if (window.__mpfFakeRemote) return window.__mpfFakeRemote;
+  const g = ghCfg(); if (g) return ghRemote(g);
   const c = syncCfg(); if (!c) return null;
   if (!SB) {
     if (!window.supabase) await loadScript("vendor/supabase-2.117.2.js");
@@ -948,13 +1010,46 @@ function applyRemote(T, r, stats) {
   const list = T.list(); const inc = T.fromR(r); const i = list.findIndex(x => x.id === r.id);
   if (i < 0) { list.push(inc); stats.down++; return; }
   const l = list[i];
-  if (!l.dirty) { list[i] = inc; stats.down++; return; }
+  if (!l.dirty) { if (l.syncedAt === r.updated_at) return; list[i] = inc; stats.down++; return; }
   if (l.syncedAt === r.updated_at) return; // c'est notre propre envoi
   if (T.same(l, inc)) { l.syncedAt = r.updated_at; l.dirty = false; return; }
   // conflit : modifié ici ET ailleurs → on garde les deux
   const copy = { ...JSON.parse(JSON.stringify(l)), id: uid(), syncedAt: null, conflict: true, dirty: true, _v: 1 };
   if (copy.entries) copy.note = "⚠ Copie en conflit (modifiée sur deux appareils). " + (copy.note || "");
   list[i] = inc; list.push(copy); stats.conflicts++;
+}
+async function syncOnce(R, stats) {
+    const user = await R.user();
+    if (!user) { DB.sync.userId = null; return false; }
+    if (DB.sync.userId && DB.sync.userId !== user.id) { DB.sync.cursor = {}; for (const w of DB.workouts) w.dirty = true; for (const x of DB.weights) x.dirty = true; DB.settings.profileDirty = true; }
+    DB.sync.userId = user.id; DB.sync.email = user.email;
+    if (R.begin) await R.begin();
+    // 1) réception
+    for (const t of Object.keys(TABLES)) {
+      const rows = await R.select(t, R.kind === "github" ? null : DB.sync.cursor[t]);
+      for (const r of rows) { applyRemote(TABLES[t], r, stats); if (R.kind !== "github" && (!DB.sync.cursor[t] || r.updated_at > DB.sync.cursor[t])) DB.sync.cursor[t] = r.updated_at; }
+    }
+    const prof = (await R.select("profil")).find(p => p.user_id === user.id);
+    if (prof && !DB.settings.profileDirty && prof.updated_at !== DB.settings.profileSyncedAt) {
+      if (prof.goal_kg != null) DB.settings.goalKg = Number(prof.goal_kg);
+      if (prof.start_kg != null) DB.settings.startKg = Number(prof.start_kg);
+      DB.settings.profileSyncedAt = prof.updated_at;
+    }
+    // 2) envoi (les résultats ne sont appliqués qu'une fois l'écriture confirmée)
+    const done = [];
+    for (const t of Object.keys(TABLES)) {
+      const T = TABLES[t]; const pend = T.pending(); if (!pend.length) continue;
+      for (let k = 0; k < pend.length; k += 200) {
+        const chunk = pend.slice(k, k + 200); const vers = new Map(chunk.map(x => [x.id, x._v]));
+        done.push([T, await R.upsert(t, chunk.map(T.toR)), vers]);
+      }
+    }
+    let profRes = null;
+    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null }], "user_id");
+    if (R.commit) await R.commit();
+    for (const [T, res, vers] of done) for (const r of res) { const rec = T.list().find(x => x.id === r.id); if (!rec) continue; rec.syncedAt = r.updated_at; if (rec._v === vers.get(r.id)) rec.dirty = false; stats.up++; }
+    if (profRes) { DB.settings.profileDirty = false; if (profRes[0]) DB.settings.profileSyncedAt = profRes[0].updated_at; }
+    return true;
 }
 async function syncNow(manual) {
   if (syncing) return;
@@ -965,33 +1060,9 @@ async function syncNow(manual) {
   syncing = true; refreshSyncUI();
   const stats = { up: 0, down: 0, conflicts: 0 };
   try {
-    const user = await R.user();
-    if (!user) { DB.sync.userId = null; return; }
-    if (DB.sync.userId && DB.sync.userId !== user.id) { DB.sync.cursor = {}; for (const w of DB.workouts) w.dirty = true; for (const x of DB.weights) x.dirty = true; }
-    DB.sync.userId = user.id; DB.sync.email = user.email;
-    // 1) réception
-    for (const t of Object.keys(TABLES)) {
-      const rows = await R.select(t, DB.sync.cursor[t]);
-      for (const r of rows) { applyRemote(TABLES[t], r, stats); if (!DB.sync.cursor[t] || r.updated_at > DB.sync.cursor[t]) DB.sync.cursor[t] = r.updated_at; }
-    }
-    const prof = (await R.select("profil")).find(p => p.user_id === user.id);
-    if (prof && !DB.settings.profileDirty && prof.updated_at !== DB.settings.profileSyncedAt) {
-      if (prof.goal_kg != null) DB.settings.goalKg = Number(prof.goal_kg);
-      if (prof.start_kg != null) DB.settings.startKg = Number(prof.start_kg);
-      DB.settings.profileSyncedAt = prof.updated_at;
-    }
-    // 2) envoi
-    for (const t of Object.keys(TABLES)) {
-      const T = TABLES[t]; const pend = T.pending(); if (!pend.length) continue;
-      for (let k = 0; k < pend.length; k += 200) {
-        const chunk = pend.slice(k, k + 200); const vers = new Map(chunk.map(x => [x.id, x._v]));
-        const res = await R.upsert(t, chunk.map(T.toR));
-        for (const r of res) { const rec = T.list().find(x => x.id === r.id); if (!rec) continue; rec.syncedAt = r.updated_at; if (rec._v === vers.get(r.id)) rec.dirty = false; stats.up++; }
-      }
-    }
-    if (DB.settings.profileDirty) {
-      const res = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null }], "user_id");
-      DB.settings.profileDirty = false; if (res[0]) DB.settings.profileSyncedAt = res[0].updated_at;
+    for (let attempt = 0; ; attempt++) {
+      try { if (!(await syncOnce(R, stats))) return; break; }
+      catch (e) { if (e.retry && attempt < 3) { await new Promise(ok => setTimeout(ok, 400 * (attempt + 1))); continue; } throw e; }
     }
     DB.sync.lastAt = new Date().toISOString(); DB.sync.lastError = null;
     if (stats.conflicts) setTimeout(() => toast(`${stats.conflicts} conflit(s) : les deux versions sont gardées (badge « conflit »).`), 50);
@@ -1006,6 +1077,11 @@ async function syncNow(manual) {
 }
 function frErr(e) {
   const m = String((e && (e.message || e.error_description || e.msg)) || e);
+  if (/PUBLIC_REPO/.test(m)) return "Ce dépôt est PUBLIC : tes données seraient visibles par tous. Crée un dépôt privé.";
+  if (/NO_WRITE/.test(m)) return "Le jeton ne peut pas écrire : donne-lui « Contents : Read and write ».";
+  if (/^GH 401/.test(m)) return "Jeton GitHub invalide ou expiré : crée un nouveau jeton.";
+  if (/^GH 403/.test(m)) return "Le jeton n'a pas accès à ce dépôt (vérifie « Repository access » et « Contents : Read and write »).";
+  if (/^GH 404/.test(m)) return "Dépôt introuvable : vérifie son nom et que le jeton y a accès.";
   if (/Invalid login credentials/i.test(m)) return "E-mail ou mot de passe incorrect.";
   if (/Email not confirmed/i.test(m)) return "Confirme d'abord ton adresse : clique sur le lien reçu par e-mail.";
   if (/already registered|already exists/i.test(m)) return "Ce compte existe déjà : utilise « Se connecter ».";
@@ -1016,11 +1092,11 @@ function frErr(e) {
   if (/Invalid API key|No API key/i.test(m)) return "Clé du projet invalide : vérifie l'URL et la clé publique.";
   return m.slice(0, 160);
 }
-function scheduleSync(ms = 1500) { if (!syncCfg() && !window.__mpfFakeRemote) return; clearTimeout(syncT); syncT = setTimeout(() => syncNow(false), ms); }
+function scheduleSync(ms = 1500) { if (!syncOn()) return; clearTimeout(syncT); syncT = setTimeout(() => syncNow(false), ms); }
 function pendingCount() { return DB.workouts.filter(w => w.dirty && w.status === "done").length + DB.weights.filter(x => x.dirty).length + (DB.settings.profileDirty ? 1 : 0); }
 function ago(iso) { const s = (Date.now() - new Date(iso)) / 1000; if (s < 60) return "à l'instant"; if (s < 3600) return `il y a ${Math.round(s / 60)} min`; if (s < 86400) return `il y a ${Math.round(s / 3600)} h`; return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); }
 function syncBadge(small) {
-  const on = (syncCfg() || window.__mpfFakeRemote) && DB.sync.userId; const p = pendingCount();
+  const on = syncOn() && DB.sync.userId; const p = pendingCount();
   let t, cls = "";
   if (!on) { if (small !== true) return ""; t = "Local"; cls = "off"; }
   else if (syncing) t = "Synchro…";
@@ -1033,12 +1109,31 @@ function syncBadge(small) {
 function refreshSyncUI() { $$("[data-sync-badge]").forEach(b => { const t = document.createElement("div"); t.innerHTML = syncBadge(true); if (t.firstElementChild) b.replaceWith(t.firstElementChild); }); const sp = $("#syncpanel"); if (sp) sp.outerHTML = syncPanel(); }
 function syncPanel() {
   const c = syncCfg();
+  const g = ghCfg();
+  if (g || (!c && !window.__mpfFakeRemote && DB.sync.mode !== "supabase")) {
+    const err = DB.sync.lastError ? `<div class="note-box" style="margin-bottom:12px">⚠ ${esc(DB.sync.lastError)}</div>` : "";
+    if (g && DB.sync.userId) { const p = pendingCount(); return `<div class="card pad" id="syncpanel">${err}
+      <div class="pr" style="border:0;padding-top:0"><span>Stockage</span><b>GitHub · dépôt privé</b></div>
+      <div class="pr"><span>Dépôt</span><b style="font-size:12px;word-break:break-all;text-align:right">${esc(g.repo)}</b></div>
+      <div class="pr"><span>Dernière synchro</span><b>${DB.sync.lastAt ? ago(DB.sync.lastAt) : "jamais"}</b></div>
+      <div class="pr"><span>En attente d'envoi</span><b>${p}</b></div>
+      <div class="row2" style="margin-top:12px"><button class="btn pri" data-act="sb-sync" ${syncing ? "disabled" : ""}>${syncing ? "Synchro…" : "Synchroniser"}</button><button class="btn ghost" data-act="gh-out">Déconnecter</button></div>
+      <p class="dim" style="font-size:12px;margin:10px 0 0">Automatique : à l'ouverture, après chaque séance ou pesée, au retour du réseau. Déconnecter retire le jeton de cet appareil sans rien effacer.</p></div>`; }
+    return `<div class="card pad" id="syncpanel">${err}
+      <p class="mut" style="font-size:14px;margin:0 0 12px">Tes séances et pesées sont enregistrées dans un fichier de ton <b>dépôt GitHub privé</b>, et chaque appareil connecté le lit et le met à jour.</p>
+      <div class="field"><label for="gh-repo">Dépôt privé (propriétaire/nom)</label><input id="gh-repo" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(DB.sync.ghRepo || GH_DEFAULT_REPO)}"></div>
+      <div class="field"><label for="gh-token">Jeton GitHub (fine-grained)</label><input id="gh-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="github_pat_…"></div>
+      <p class="dim" style="font-size:12px;margin:0 0 12px">Le jeton reste uniquement sur cet appareil. Il n'est jamais mis dans le code ni dans les sauvegardes exportées.</p>
+      <button class="btn pri block" data-act="gh-in">Connecter et synchroniser</button>
+      ${!g ? `<button class="btn ghost sm block" style="margin-top:10px" data-act="sb-mode">Utiliser Supabase à la place</button>` : ""}</div>`;
+  }
   if (!c && !window.__mpfFakeRemote) return `<div class="card pad" id="syncpanel">
     <p class="mut" style="font-size:14px;margin:0 0 12px">Relie l'appli à ton compte <b>Supabase</b> (gratuit) pour retrouver les mêmes séances et pesées sur ton iPhone et ton ordinateur. Les étapes sont dans le README du projet.</p>
     <div class="field"><label for="sb-url">URL du projet</label><input id="sb-url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://xxxx.supabase.co" value="${esc(DB.sync.url)}"></div>
     <div class="field"><label for="sb-key">Clé publique (publishable / anon)</label><input id="sb-key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sb_publishable_…" value="${esc(DB.sync.key)}"></div>
     <p class="dim" style="font-size:12px;margin:0 0 12px">Ne colle jamais la clé « secret » ou « service_role » ici.</p>
-    <button class="btn sec block" data-act="sb-save">Enregistrer</button></div>`;
+    <button class="btn sec block" data-act="sb-save">Enregistrer</button>
+    <button class="btn ghost sm block" style="margin-top:10px" data-act="gh-mode">Utiliser GitHub à la place</button></div>`;
   const err = DB.sync.lastError ? `<div class="note-box" style="margin-bottom:12px">⚠ ${esc(DB.sync.lastError)}</div>` : "";
   if (!DB.sync.userId) return `<div class="card pad" id="syncpanel">${err}
     <p class="mut" style="font-size:14px;margin:0 0 12px">Connecte-toi avec le même compte sur chaque appareil. Tes données locales seront envoyées dans ton compte, sans rien effacer.</p>
@@ -1197,6 +1292,25 @@ function handleAct(ev) {
       })(); break;
     }
     case "sb-sync": syncNow(true); break;
+    case "sb-mode": DB.sync.mode = "supabase"; saveNow(); render(true); break;
+    case "gh-mode": DB.sync.mode = "github"; saveNow(); render(true); break;
+    case "gh-in": {
+      const repo = $("#gh-repo").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/+$/, "");
+      const tok = $("#gh-token").value.trim();
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { toast("Dépôt attendu sous la forme propriétaire/nom."); break; }
+      if (!/^(github_pat_|ghp_)[\w]{20,}$/.test(tok)) { toast("Jeton invalide : il commence par github_pat_"); break; }
+      el.disabled = true;
+      (async () => {
+        DB.sync.ghRepo = repo; DB.sync.mode = "github";
+        try { localStorage.setItem("mpf.ghtoken", tok); } catch (e) {}
+        try {
+          await ghRemote(ghCfg()).check();
+          DB.sync.lastError = null; DB.settings.profileDirty = DB.settings.profileDirty || !!DB.settings.profileUpdatedAt;
+          await syncNow(true);
+        } catch (e) { try { localStorage.removeItem("mpf.ghtoken"); } catch (x) {} DB.sync.userId = null; DB.sync.lastError = frErr(e); saveNow(); render(true); }
+      })(); break;
+    }
+    case "gh-out": try { localStorage.removeItem("mpf.ghtoken"); } catch (e) {} DB.sync.userId = null; DB.sync.lastError = null; saveNow(); render(true); toast("Déconnecté. Tes données restent sur cet appareil."); break;
     case "sb-out": (async () => { try { const R = await remote(); await R.signOut(); } catch (e) {} DB.sync.userId = null; DB.sync.lastError = null; saveNow(); render(true); toast("Déconnecté. Tes données restent sur cet appareil."); })(); break;
     case "dl-backup": { const raw = localStorage.getItem("mpf.backup.v5"); if (!raw) break; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([raw], { type: "application/json" })); a.download = "programme-fitness-copie-v5.json"; document.body.appendChild(a); a.click(); a.remove(); break; }
     case "wipe": sheet(`<h2 class="disp">Tout effacer ?</h2><p>Cela supprime les ${DB.workouts.length} séance(s) et ${DB.weights.length} pesée(s) de ce navigateur. Ce qui est déjà synchronisé dans ton compte reste dans le cloud et reviendra à la prochaine connexion. Exporte une sauvegarde avant si tu as un doute.</p>

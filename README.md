@@ -10,7 +10,7 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
 - **Progrès** : assiduité sur 4 semaines, semaines complètes d'affilée, records battus en 30 jours, calendrier des 12 dernières semaines, carte des muscles travaillés dans la semaine, volume par semaine, et par exercice : charge max, 1RM estimé, volume, progression en %.
 - **Coach de progression** (double progression) : quand tu fais le haut de la fourchette sur toutes les séries, l'appli te dit de monter d'un cran ; sinon elle te donne les répétitions à viser. Elle signale aussi 3 séances sans progrès.
 - **Poids** : pesées, moyenne sur 7 jours, tendance par semaine, reste à perdre jusqu'à **77 kg**, date d'arrivée estimée, tour de taille facultatif.
-- **Synchronisation iPhone ↔ ordinateur** avec un compte Supabase gratuit (facultatif).
+- **Synchronisation iPhone ↔ ordinateur** via un dépôt GitHub privé (ou Supabase), facultative.
 - **Minuteur de repos** qui démarre quand tu valides une série.
 - **Cardio** : marche inclinée 15–20 min avec 3 niveaux.
 - **Installable sur l'écran d'accueil** de l'iPhone (PWA) et utilisable sans réseau une fois ouverte une première fois.
@@ -52,7 +52,27 @@ Chaque appareil garde **toutes** tes données dans son navigateur, même sans r�
 - Les mises à jour de l'appli **n'effacent rien** : les données restent au même endroit, et la V6 garde en plus une copie de sécurité de tes données V5 (⚙ → bouton « Copie de sécurité V5 »).
 - Exporte une sauvegarde de temps en temps : ⚙ → **Exporter une sauvegarde**. L'import fusionne sans créer de doublon.
 
-## Synchroniser l'iPhone et l'ordinateur (Supabase, gratuit, ~20 min une seule fois)
+## Synchroniser l'iPhone et l'ordinateur avec GitHub (recommandé, gratuit, ~5 min)
+
+Tes séances, pesées et ton objectif sont enregistrés dans un fichier `carnet.json` rangé dans un **dépôt GitHub privé**, à part de l'appli. Chaque appareil le lit et le met à jour avec un **jeton** qui ne donne accès qu'à ce dépôt-là.
+
+1. **Créer le dépôt privé** : https://github.com/new → nom `mon-programme-fitness-data` → coche **Private** → coche **Add a README file** → **Create repository**.
+2. **Créer le jeton** : https://github.com/settings/personal-access-tokens/new
+   - *Token name* : `carnet fitness` · *Expiration* : 1 an (366 days) ou ce que GitHub propose de plus long
+   - *Repository access* : **Only select repositories** → choisis `mon-programme-fitness-data` (et rien d'autre)
+   - *Permissions* → *Repository permissions* → **Contents : Read and write**
+   - **Generate token** → copie le jeton (il commence par `github_pat_`). GitHub ne l'affiche qu'une fois.
+3. **Sur le téléphone d'abord** (c'est lui qui a tes séances) : ⚙ → Synchronisation → colle le jeton → **Connecter et synchroniser**.
+4. **Sur l'ordinateur** : ouvre l'adresse de l'appli → ⚙ → colle le même jeton → **Connecter et synchroniser**.
+
+Sécurité :
+- Le jeton reste **seulement sur l'appareil** : il n'est jamais écrit dans le code, ni dans le dépôt, ni dans les sauvegardes exportées.
+- L'appli refuse un dépôt public.
+- Si tu perds ton téléphone : https://github.com/settings/personal-access-tokens → supprime le jeton, puis crée-en un nouveau.
+- À l'expiration du jeton, l'appli affiche « Jeton invalide ou expiré » : recrée-en un (étape 2) et recolle-le.
+- Chaque synchronisation crée un commit dans le dépôt privé : GitHub garde donc l'historique de toutes les versions de ton carnet.
+
+## Variante : synchroniser avec Supabase (au lieu de GitHub)
 
 1. Va sur https://supabase.com → **Start your project** → connecte-toi avec ton compte GitHub.
 2. **New project** : nom `mon-programme-fitness`, choisis un mot de passe de base de données (garde-le pour toi, l'appli n'en a pas besoin), région **Europe (Frankfurt ou Paris)**, offre **Free**. Attends 2 minutes.
