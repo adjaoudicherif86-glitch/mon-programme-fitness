@@ -21,7 +21,9 @@ window.MUSCLES = {
   "grand-rond":{ nom: "Grand rond & infra-épineux",  parts: [["back", "teres"]] },
   trapezes:    { nom: "Trapèzes & rhomboïdes",       parts: [["front", "traps"], ["back", "traps"]] },
   lombaires:   { nom: "Lombaires (érecteurs du rachis)", parts: [["back", "lowerback"]] },
-  tibial:      { nom: "Tibial antérieur",            parts: [["front", "tibialis"]] }
+  tibial:      { nom: "Tibial antérieur",            parts: [["front", "tibialis"]] },
+  epaules:     { nom: "Deltoïdes (épaules)",         parts: [["front", "delt"], ["back", "delt"]] },
+  abducteurs:  { nom: "Abducteurs (moyen fessier)",  parts: [["back", "glutes"]] }
 };
 
 window.SESSIONS = {

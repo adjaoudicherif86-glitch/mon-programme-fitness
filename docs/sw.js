@@ -1,15 +1,16 @@
 /* Service worker : rend l'app disponible hors connexion (après une première visite en ligne).
    IMPORTANT : à chaque mise à jour du code, change VERSION ci-dessous. Tes données ne sont pas touchées. */
-const VERSION = "mpf-6.1.0";
+const VERSION = "mpf-6.2.0";
 const SHELL = [
   "./",
   "index.html",
-  "app.css?v=6.1.0",
-  "app.js?v=6.1.0",
-  "config.js?v=6.1.0",
-  "data.js?v=6.1.0",
+  "app.css?v=6.2.0",
+  "app.js?v=6.2.0",
+  "config.js?v=6.2.0",
+  "data.js?v=6.2.0",
   "vendor/supabase-2.117.2.js",
-  "anatomy-data.js?v=6.1.0",
+  "library.json?v=6.2.0",
+  "anatomy-data.js?v=6.2.0",
   "manifest.webmanifest",
   "fonts/archivo.woff2",
   "icons/icon-192.png",
@@ -55,7 +56,7 @@ self.addEventListener("install", e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION && k !== "mpf-fonts").map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION && k !== "mpf-fonts" && k !== "mpf-img").map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener("fetch", e => {
   const req = e.request; if (req.method !== "GET") return;
@@ -64,7 +65,12 @@ self.addEventListener("fetch", e => {
     e.respondWith(caches.open("mpf-fonts").then(c => c.match(req).then(hit => hit || fetch(req).then(r => { c.put(req, r.clone()); return r; }))));
     return;
   }
-  if (url.origin !== location.origin) return; // Supabase (API) : jamais mis en cache
+  if (url.host === "raw.githubusercontent.com" && url.pathname.startsWith("/yuhonas/free-exercise-db/")) {
+    // photos de la bibliothèque : gardées après la 1re vue (utilisables hors connexion)
+    e.respondWith(caches.open("mpf-img").then(c => c.match(req).then(hit => hit || fetch(req).then(r => { if (r.ok || r.type === "opaque") c.put(req, r.clone()); return r; }))));
+    return;
+  }
+  if (url.origin !== location.origin) return; // API GitHub / Supabase : jamais mis en cache
   if (url.pathname.endsWith("config.js")) { e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); return r; }).catch(() => caches.match(req, { ignoreSearch: true }))); return; }
   if (req.mode === "navigate") {
     e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put("./", cp)); return r; }).catch(() => caches.match("./")));

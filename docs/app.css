@@ -327,3 +327,25 @@ div > .coach{margin:0}
 .sbadge.err{background:var(--txt);color:var(--inv);border-color:var(--txt)}
 .nav-in{grid-template-columns:repeat(5,1fr)}
 @media (max-width:370px){.kgrid{grid-template-columns:1fr 1fr}.wform{grid-template-columns:1fr 1fr}.wform .field:last-child{grid-column:1/-1}}
+
+/* ───── V6.2 : bibliothèque ───── */
+.bw{filter:grayscale(1) contrast(1.1)}
+.hdimg{width:58px;height:58px;border-radius:12px;object-fit:cover;flex:none}
+.ph-body{display:grid;place-items:center;background:#0d0d0d;border:1px solid var(--line);overflow:hidden}
+.ph-body svg{height:90%;width:auto}
+.addex{margin-top:16px;border-style:dashed}
+.picker{display:flex;flex-direction:column;min-height:70vh}
+.pk-head{position:sticky;top:-20px;z-index:3;background:var(--s1);margin:-20px -18px 0;padding:20px 18px 10px;border-bottom:1px solid var(--line)}
+.pk-head h2{font-size:28px;margin-bottom:10px}
+.pk-head input{width:100%;height:48px;border-radius:12px;border:1px solid var(--line2);background:var(--s2);padding:0 14px;font-size:16px}
+.pk-chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-top:10px;padding-bottom:2px}
+.pk-chips::-webkit-scrollbar{display:none}
+.pk-chips .chip{flex:none;cursor:pointer}
+.pk-list{flex:1;padding-top:4px}
+.li.pk{width:100%;text-align:left;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit}
+.li.pk:first-child{border-top:0}
+.li.pk:disabled{opacity:.45}
+.li.pk .thumb{width:72px;height:48px}
+.li.pk small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pk-foot{position:sticky;bottom:calc(-18px - var(--safe-b));background:var(--s1);margin:0 -18px calc(-18px - var(--safe-b));padding:12px 18px calc(14px + var(--safe-b));border-top:1px solid var(--line)}
+.field select{appearance:none;-webkit-appearance:none}

@@ -11,6 +11,7 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
 - **Coach de progression** (double progression) : quand tu fais le haut de la fourchette sur toutes les séries, l'appli te dit de monter d'un cran ; sinon elle te donne les répétitions à viser. Elle signale aussi 3 séances sans progrès.
 - **Poids** : pesées, moyenne sur 7 jours, tendance par semaine, reste à perdre jusqu'à **77 kg**, date d'arrivée estimée, tour de taille facultatif.
 - **Synchronisation iPhone ↔ ordinateur** via un dépôt GitHub privé (ou Supabase), facultative.
+- **Bibliothèque de 750 exercices** : pendant une séance, « + Ajouter un exercice » → recherche en français ou en anglais (« curl barre », « squat »…), filtres par muscle et par matériel, photo, muscles ciblés. Tu peux aussi créer ton propre exercice, et choisir de l'ajouter automatiquement aux prochaines séances A, B ou C (à retirer depuis l'onglet Programme). Les exercices ajoutés ont leurs records, leur courbe et le coach de progression comme les autres.
 - **Minuteur de repos** qui démarre quand tu valides une série.
 - **Cardio** : marche inclinée 15–20 min avec 3 niveaux.
 - **Installable sur l'écran d'accueil** de l'iPhone (PWA) et utilisable sans réseau une fois ouverte une première fois.
@@ -102,6 +103,8 @@ docs/
   data.js               le programme : séances, exercices, muscles, consignes
   anatomy-data.js       les tracés de la planche anatomique
   img/ex/               36 photos (départ = -0, arrivée = -1)
+  img/lib/              miniatures de la bibliothèque
+  library.json          bibliothèque d'exercices (générée par tools/build_library.py)
   fonts/                police Archivo (hébergée ici, marche hors ligne)
   icons/                icônes de l'application
   manifest.webmanifest  fiche d'installation (PWA)
@@ -114,6 +117,7 @@ supabase/
 
 ## Crédits et licences
 
+- **Bibliothèque** : noms traduits en français (95 à la main, les autres par règles automatiques ; le nom anglais d'origine est toujours affiché), instructions d'origine en anglais. Les grandes photos sont chargées depuis le dépôt free-exercise-db puis gardées pour le hors-ligne.
 - **Photos des exercices** : [free-exercise-db](https://github.com/yuhonas/free-exercise-db), base dédiée au domaine public (licence Unlicense), converties en noir et blanc. Le dépôt ne documente pas le photographe d'origine ; si un ayant droit se manifeste, les photos seront remplacées.
 - **Planches anatomiques** : tracés de [react-native-body-highlighter](https://github.com/HichamELBSI/react-native-body-highlighter), licence MIT © 2022 ELABBASSI Hicham, découpés par muscle et recolorés.
 - **Synchronisation** : [supabase-js](https://github.com/supabase/supabase-js), licence MIT.
