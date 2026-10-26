@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.2.0";
+const APP_VERSION = "6.3.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -239,6 +239,9 @@ function navHTML(cur) {
     `<a href="#/seance" class="go ${cur === "wk" ? "on" : ""}" aria-label="${has ? "Reprendre la séance en cours" : "Démarrer une séance"}"><span class="pill">${I.play}</span>${has ? '<i class="dot"></i>' : ""}<span>Séance</span></a>` +
     a("#/progres", "prog2", I.chart, "Progrès") + a("#/poids", "poids", I.scale, "Poids");
 }
+/* Programme personnalisé : exercices retirés d'une séance (l'historique est conservé) */
+const removedOf = s => ((DB.settings.removed || {})[s] || []);
+const progEx = s => EX.filter(e => e.s === s && !removedOf(s).includes(e.id));
 function todaySession() { const d = new Date().getDay(); return d === 1 ? "A" : d === 3 ? "B" : d === 5 ? "C" : nextSession(); }
 function nextSession() {
   const d = new Date().getDay(); const order = [["A", 1], ["B", 3], ["C", 5]];
@@ -248,7 +251,7 @@ function isTrainingDay() { return [1, 3, 5].includes(new Date().getDay()); }
 
 /* ───────────── Écrans ───────────── */
 function vHome() {
-  const s = todaySession(), S = SES[s], exs = EX.filter(e => e.s === s);
+  const s = todaySession(), S = SES[s], exs = progEx(s);
   const ws = sorted(); const last = ws[0];
   const mon = mondayOf(new Date()); const thisWeek = ws.filter(w => parseDay(w.date) >= mon);
   const weekVol = thisWeek.reduce((a, w) => a + wVol(w), 0);
@@ -279,7 +282,7 @@ function vHome() {
     <div class="eyebrow">${isTrainingDay() ? "Séance du jour" : "Prochaine séance · " + S.jour}</div>
     <h2 class="disp">${esc(S.nom)}</h2>
     <div class="focus">${esc(S.focus)} · ~55 min + cardio</div>
-    <ol>${exs.map(e => `<li>${esc(e.nom)}<span>${e.series} × ${repTxt(e)}</span></li>`).join("")}</ol>
+    <ol>${exs.map(e => `<li>${esc(e.nom)}<span>${e.series} × ${repTxt(e)}</span></li>`).join("")}${((DB.settings.extras || {})[s] || []).map(d => { const e = exOf(d.id) || d; return `<li>${esc(e.nom)}<span>${d.series || 3} × ${e.reps ? repTxt(e) : "–"}</span></li>`; }).join("")}</ol>
     <div class="row2"><a class="btn sec" href="#/programme/${s}">Voir</a>
       <button class="btn pri" data-act="start" data-s="${s}">${I.play}Commencer</button></div>
   </section>
@@ -307,7 +310,7 @@ function weightCardHome() {
 
 function vProgramme(s) {
   if (!SES[s]) s = "A";
-  const exs = EX.filter(e => e.s === s);
+  const exs = progEx(s);
   return `
   <header class="top"><div><div class="eyebrow">Programme full body · 3 × / semaine</div><h1 class="disp" style="margin-top:6px">Programme</h1></div></header>
   <div class="seg" role="tablist">${Object.entries(SES).map(([k, v]) => `<button role="tab" aria-selected="${k === s}" class="${k === s ? "on" : ""}" data-go="#/programme/${k}">Séance ${k}<small>${v.jour}</small></button>`).join("")}</div>
@@ -330,6 +333,14 @@ function vProgramme(s) {
     <div class="lvl">${CARDIO.niveaux.map(n => `<div><b>${n.nom}</b><span>${n.incl}</span><span>${n.vit}</span></div>`).join("")}</div>
   </div>
   ${((DB.settings.extras || {})[s] || []).length ? `<div class="sec-title"><h2 class="disp">Ajoutés par toi</h2></div><div class="card" style="padding:4px 16px">${DB.settings.extras[s].map(d => `<div class="pr pr3"><a href="#/exercice/${d.id}" style="text-decoration:none">${esc(d.nom)}</a><span class="mut" style="font-size:12px">${d.series || 3} séries</span><button class="chip" data-act="rm-keep" data-s="${s}" data-id="${d.id}" aria-label="Retirer de la séance ${s}">✕</button></div>`).join("")}</div>` : ""}
+  <div class="sec-title"><h2 class="disp">Modifier la séance ${s}</h2></div>
+  <div class="card" style="padding:4px 16px">
+    ${EX.filter(e => e.s === s).map(e => { const off = removedOf(s).includes(e.id);
+      return `<div class="pr pr3 ${off ? "off" : ""}"><span>${esc(e.nom)}${off ? '<span class="badge">retiré</span>' : ""}</span><span class="mut" style="font-size:12px">${e.series} × ${repTxt(e)}</span>
+        <button class="chip ${off ? "" : ""}" data-act="${off ? "prog-restore" : "prog-remove"}" data-s="${s}" data-id="${e.id}">${off ? "Remettre" : "Retirer"}</button></div>`; }).join("")}
+  </div>
+  <button class="btn sec block" style="margin-top:10px" data-act="prog-add" data-s="${s}">+ Ajouter un exercice à la séance ${s}</button>
+  <p class="dim" style="font-size:12px;margin:8px 2px 0">Retirer un exercice ne supprime pas tes anciennes séries : elles restent dans l'historique et les records. Les changements sont synchronisés avec tes autres appareils.</p>
   <button class="btn pri block" style="margin-top:18px" data-act="start" data-s="${s}">${I.play}Commencer la séance ${s}</button>`;
 }
 
@@ -419,11 +430,15 @@ const PICK_MUSC = [["", "Tous"], ["pec", "Pectoraux"], ["dos", "Dos"], ["epa", "
 const PICK_KEYS = { pec: ["pecs", "pecs-haut"], dos: ["dorsaux", "grand-rond", "trapezes", "lombaires"], epa: ["epaules", "delt-ant", "delt-lat", "delt-post"], bic: ["biceps", "avant-bras"], tri: ["triceps"], jam: ["quadriceps", "ischios", "fessiers", "adducteurs", "abducteurs"], mol: ["mollets"], abs: ["abdos", "obliques"] };
 const PICK_EQ = [["", "Tout matériel"], ["barre", "Barre"], ["haltères", "Haltères"], ["machine", "Machine"], ["poulie", "Poulie"], ["poids du corps", "Poids du corps"], ["kettlebell", "Kettlebell"], ["barre EZ", "Barre EZ"], ["élastique", "Élastique"]];
 const pick = { q: "", m: "", eq: "" };
+function pickCtx() {
+  if (pick.prog) { const s = pick.prog; const entries = {}; for (const e of progEx(s)) entries[e.id] = 1; for (const d of ((DB.settings.extras || {})[s] || [])) entries[d.id] = 1; return { session: s, entries, prog: true }; }
+  return editorTarget();
+}
 function pickerList() {
-  const w = editorTarget(); if (!w || !LIB) return `<p class="mut">Chargement de la bibliothèque…</p>`;
+  const w = pickCtx(); if (!w || !LIB) return `<p class="mut">Chargement de la bibliothèque…</p>`;
   const words = normQ(pick.q).split(/\s+/).filter(Boolean);
   const inW = id => !!w.entries[id];
-  const prog = EX.filter(e => e.s !== w.session).map(e => ({ id: e.id, fr: e.nom, en: "Mon programme · séance " + e.s, eq: e.machine, P: e.P, q: normQ(e.nom + " " + e.machine), prog: true, cat: "Musculation" }));
+  const prog = EX.filter(e => e.s !== w.session || removedOf(w.session).includes(e.id)).map(e => ({ id: e.id, fr: e.nom, en: "Mon programme · séance " + e.s, eq: e.machine, P: e.P, q: normQ(e.nom + " " + e.machine), prog: true, cat: "Musculation" }));
   let list = prog.concat(LIB.exercises);
   if (pick.m === "card") list = list.filter(e => e.cat === "Cardio");
   else if (pick.m) list = list.filter(e => e.P.some(k => PICK_KEYS[pick.m].includes(k)));
@@ -461,7 +476,14 @@ function openPicker() {
   if (!LIB) loadLib().then(() => { const l = $("#pk-list"); if (l) l.innerHTML = pickerList(); }).catch(() => { const l = $("#pk-list"); if (l) l.innerHTML = `<p class="mut">Bibliothèque indisponible hors connexion (ouvre-la une fois avec du réseau). Tu peux créer ton propre exercice.</p>`; });
 }
 function confirmPick(def) {
-  const w = editorTarget(); if (!w) return;
+  const w = pickCtx(); if (!w) return;
+  if (w.prog) {
+    sheet(`<h2 class="disp">${esc(def.nom)}</h2><p>${esc([def.machine, def.en].filter(Boolean).join(" · "))}</p>
+      ${def.lib ? `<img src="${def.thumb}" alt="" style="width:100%;border-radius:14px;margin-bottom:12px">` : ""}
+      <div class="field"><label for="pk-n">Séries</label><input id="pk-n" inputmode="numeric" value="${def.series || 3}"></div>
+      <div class="btns"><button class="btn pri" data-act="pick-ok">Ajouter à la séance ${w.session}</button><button class="btn ghost" data-act="pick-back">Retour à la liste</button></div>`);
+    pick.def = def; return;
+  }
   sheet(`<h2 class="disp">${esc(def.nom)}</h2><p>${esc([def.machine, def.en].filter(Boolean).join(" · "))}</p>
     ${def.lib ? `<img src="${def.thumb}" alt="" style="width:100%;border-radius:14px;margin-bottom:12px">` : ""}
     <div class="row2"><div class="field"><label for="pk-n">Séries</label><input id="pk-n" inputmode="numeric" value="3"></div>
@@ -470,7 +492,15 @@ function confirmPick(def) {
     <div class="btns"><button class="btn pri" data-act="pick-ok">Ajouter à la séance</button><button class="btn ghost" data-act="pick-back">Retour à la liste</button></div>`);
   pick.def = def;
 }
+function addToProgram(s, def, n) {
+  if (EXI[def.id] && EXI[def.id].s === s) { DB.settings.removed = DB.settings.removed || {}; DB.settings.removed[s] = removedOf(s).filter(x => x !== def.id); }
+  else { const slim = { ...def, series: n }; delete slim.ins; DB.settings.extras = DB.settings.extras || {}; const L = DB.settings.extras[s] = DB.settings.extras[s] || [];
+    if (!L.some(x => x.id === def.id)) L.push(slim); DEFS[def.id] = DEFS[def.id] || slim; }
+  DB.settings.profileUpdatedAt = new Date().toISOString(); DB.settings.profileDirty = true; saveNow(); scheduleSync();
+  pick.prog = null; closeSheet(); render(true); toast(`${def.nom} ajouté à la séance ${s} ✓`);
+}
 function addExtra(def, n, keep) {
+  if (pick.prog) return addToProgram(pick.prog, def, n);
   const w = editorTarget(); if (!w) return;
   const slim = { ...def }; delete slim.ins;
   w.defs = w.defs || {}; w.defs[def.id] = slim; DEFS[def.id] = slim;
@@ -494,7 +524,7 @@ function customForm() {
 /* ───────────── Séance (saisie) ───────────── */
 function newWorkout(s) {
   const entries = {};
-  for (const e of EX.filter(x => x.s === s)) {
+  for (const e of progEx(s)) {
     const pv = prevFor(e.id);
     const n = Math.max(e.series, pv ? pv.sets.filter(x => x.done).length : 0);
     entries[e.id] = { sets: Array.from({ length: n }, () => ({ kg: "", reps: "", done: false })), note: "" };
@@ -578,7 +608,7 @@ function vWorkout() {
   return editorHTML(w, "draft");
 }
 function editorHTML(w, mode) {
-  const exs = EX.filter(e => e.s === w.session);
+  const exs = EX.filter(e => e.s === w.session && (w.entries[e.id] || !removedOf(w.session).includes(e.id)));
   for (const e of exs) if (!w.entries[e.id]) w.entries[e.id] = { sets: Array.from({ length: e.series }, () => ({ kg: "", reps: "", done: false })), note: "" };
   const done = wSets(w), tot = wTotalSets(w);
   const isEdit = mode === "edit";
@@ -1184,6 +1214,7 @@ async function syncOnce(R, stats) {
       if (prof.goal_kg != null) DB.settings.goalKg = Number(prof.goal_kg);
       if (prof.start_kg != null) DB.settings.startKg = Number(prof.start_kg);
       if (prof.extras && typeof prof.extras === "object") DB.settings.extras = prof.extras;
+      if (prof.removed && typeof prof.removed === "object") DB.settings.removed = prof.removed;
       DB.settings.profileSyncedAt = prof.updated_at;
     }
     // 2) envoi (les résultats ne sont appliqués qu'une fois l'écriture confirmée)
@@ -1196,7 +1227,7 @@ async function syncOnce(R, stats) {
       }
     }
     let profRes = null;
-    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null, extras: DB.settings.extras || {} }], "user_id");
+    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null, extras: DB.settings.extras || {}, removed: DB.settings.removed || {} }], "user_id");
     if (R.commit) await R.commit();
     for (const [T, res, vers] of done) for (const r of res) { const rec = T.list().find(x => x.id === r.id); if (!rec) continue; rec.syncedAt = r.updated_at; if (rec._v === vers.get(r.id)) rec.dirty = false; stats.up++; }
     if (profRes) { DB.settings.profileDirty = false; if (profRes[0]) DB.settings.profileSyncedAt = profRes[0].updated_at; }
@@ -1325,6 +1356,7 @@ $("#rest").addEventListener("click", ev => {
 function sheet(html) { closeSheet(); const bg = document.createElement("div"); bg.className = "sheet-bg"; bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`; document.body.appendChild(bg);
   bg.addEventListener("click", ev => { if (ev.target === bg || ev.target.closest("[data-close]")) closeSheet(); handleAct(ev); }); }
 function closeSheet() { $$(".sheet-bg").forEach(x => x.remove()); }
+addEventListener("hashchange", () => { pick.prog = null; });
 let toastT;
 function toast(msg, undo, label = "Annuler") {
   $$(".toast").forEach(x => x.remove()); clearTimeout(toastT);
@@ -1443,7 +1475,19 @@ function handleAct(ev) {
       })(); break;
     }
     case "sb-sync": syncNow(true); break;
-    case "add-ex": pick.q = ""; pick.m = ""; pick.eq = ""; openPicker(); setTimeout(() => { const q = $("#pk-q"); if (q && matchMedia("(pointer:fine)").matches) q.focus(); }, 50); break;
+    case "prog-add": pick.prog = el.dataset.s; pick.q = ""; pick.m = ""; pick.eq = ""; openPicker(); break;
+    case "prog-remove": {
+      const s0 = el.dataset.s, e = EXI[el.dataset.id];
+      sheet(`<h2 class="disp">Retirer ?</h2><p><b>${esc(e.nom)}</b> ne sera plus proposé dans la séance ${s0}. Tes anciennes séries restent dans l'historique et les records. Tu peux le remettre à tout moment.</p>
+        <div class="btns"><button class="btn pri" data-act="prog-remove-ok" data-s="${s0}" data-id="${e.id}">Retirer de la séance ${s0}</button><button class="btn ghost" data-close>Annuler</button></div>`); break;
+    }
+    case "prog-remove-ok": case "prog-restore": {
+      const s0 = el.dataset.s, id = el.dataset.id; DB.settings.removed = DB.settings.removed || {};
+      const L = removedOf(s0).filter(x => x !== id); if (act === "prog-remove-ok") L.push(id); DB.settings.removed[s0] = L;
+      DB.settings.profileUpdatedAt = new Date().toISOString(); DB.settings.profileDirty = true; saveNow(); scheduleSync(); closeSheet(); render(true);
+      toast(act === "prog-restore" ? `${EXI[id].nom} remis dans la séance ${s0} ✓` : `${EXI[id].nom} retiré de la séance ${s0}`); break;
+    }
+    case "add-ex": pick.prog = null; pick.q = ""; pick.m = ""; pick.eq = ""; openPicker(); setTimeout(() => { const q = $("#pk-q"); if (q && matchMedia("(pointer:fine)").matches) q.focus(); }, 50); break;
     case "pick-back": openPicker(); break;
     case "pick-ex": {
       const id = el.dataset.id;
@@ -1451,6 +1495,7 @@ function handleAct(ev) {
       if (LIB && LIB.byId[id]) confirmPick(libDef(LIB.byId[id])); break;
     }
     case "pick-ok": { const d = pick.def; if (!d) break; const n = parseInt(($("#pk-n") || {}).value, 10) || 3; const keep = !!($("#pk-keep") && $("#pk-keep").checked);
+      if (pick.prog) { addToProgram(pick.prog, d, n); break; }
       if (EXI[d.id]) { const w = editorTarget(); w.entries[d.id] = { sets: Array.from({ length: n }, () => ({ kg: "", reps: "", done: false })), note: "", extra: true }; if (keep) { DB.settings.extras = DB.settings.extras || {}; const L = DB.settings.extras[w.session] = DB.settings.extras[w.session] || []; if (!L.some(x => x.id === d.id)) L.push({ id: d.id, nom: d.nom, series: n }); DB.settings.profileDirty = true; } touch(w); saveNow(); closeSheet(); render(true); toast("Exercice ajouté ✓"); }
       else addExtra({ ...d, series: n }, n, keep); break; }
     case "custom-ex": customForm(); break;

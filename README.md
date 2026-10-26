@@ -12,6 +12,7 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
 - **Poids** : pesées, moyenne sur 7 jours, tendance par semaine, reste à perdre jusqu'à **77 kg**, date d'arrivée estimée, tour de taille facultatif.
 - **Synchronisation iPhone ↔ ordinateur** via un dépôt GitHub privé (ou Supabase), facultative.
 - **Bibliothèque de 750 exercices** : pendant une séance, « + Ajouter un exercice » → recherche en français ou en anglais (« curl barre », « squat »…), filtres par muscle et par matériel, photo, muscles ciblés. Tu peux aussi créer ton propre exercice, et choisir de l'ajouter automatiquement aux prochaines séances A, B ou C (à retirer depuis l'onglet Programme). Les exercices ajoutés ont leurs records, leur courbe et le coach de progression comme les autres.
+- **Programme modifiable** : onglet Programme → « Modifier la séance » → **Retirer** un exercice (ex. les mollets de la séance C) ou le **Remettre**, et « + Ajouter un exercice à la séance » depuis la bibliothèque. L'historique et les records ne sont jamais supprimés. Synchronisé entre tes appareils.
 - **Minuteur de repos** qui démarre quand tu valides une série.
 - **Cardio** : marche inclinée 15–20 min avec 3 niveaux.
 - **Installable sur l'écran d'accueil** de l'iPhone (PWA) et utilisable sans réseau une fois ouverte une première fois.

@@ -349,3 +349,4 @@ div > .coach{margin:0}
 .li.pk small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-foot{position:sticky;bottom:calc(-18px - var(--safe-b));background:var(--s1);margin:0 -18px calc(-18px - var(--safe-b));padding:12px 18px calc(14px + var(--safe-b));border-top:1px solid var(--line)}
 .field select{appearance:none;-webkit-appearance:none}
+.pr.off > span:first-child{color:var(--dim);text-decoration:line-through}

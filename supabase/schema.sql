@@ -37,6 +37,10 @@ create table if not exists public.profil (
   updated_at  timestamptz not null default now()
 );
 
+-- Programme personnalisé (exercices ajoutés / retirés par séance)
+alter table public.profil add column if not exists extras  jsonb;
+alter table public.profil add column if not exists removed jsonb;
+
 create index if not exists workouts_user_updated on public.workouts (user_id, updated_at);
 create index if not exists weights_user_updated  on public.weights  (user_id, updated_at);
 
