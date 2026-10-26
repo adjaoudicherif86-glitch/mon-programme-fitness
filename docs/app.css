@@ -379,3 +379,24 @@ div > .coach{margin:0}
 .ask{display:grid;grid-template-columns:1fr 54px;gap:8px;align-items:end}
 .ask textarea{width:100%;min-height:54px;max-height:140px;border-radius:14px;border:1px solid var(--line2);background:var(--s2);padding:12px 14px;font-size:16px;resize:none}
 .ask .btn{padding:0;font-size:22px;min-height:54px}
+
+/* ───── V6.5 : bilan du coach ───── */
+.report{padding:18px}
+.rkpi{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:14px 0 4px;text-align:center}
+.rkpi div{background:var(--s2);border-radius:12px;padding:10px 4px}
+.rkpi b{display:block;font-size:22px;font-weight:800;font-stretch:72%;font-variation-settings:"wdth" 72;line-height:1.1}
+.rkpi b .dim{font-size:13px}
+.rkpi small{font-size:10px;color:var(--mut);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.rsec{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
+.rsec h4{margin:0 0 6px;font-size:12px;letter-spacing:.14em;text-transform:uppercase}
+.rlist{list-style:none;margin:0;padding:0}
+.rlist li{position:relative;padding:5px 0 5px 18px;font-size:14px;line-height:1.45;color:#dcdcdc}
+.rlist li::before{content:"";position:absolute;left:2px;top:12px;width:7px;height:7px;border-radius:50%;background:var(--txt)}
+.rlist.bad li::before{background:none;border:1.5px solid var(--txt)}
+.rlist.next li::before{content:"→";background:none;width:auto;height:auto;top:4px;font-weight:800;font-size:13px}
+.aicard .ai-body{font-size:14.5px;line-height:1.5}
+.aicard .ai-body p{margin:0 0 8px}.aicard .ai-body ul{margin:2px 0 10px;padding-left:18px}.aicard .ai-body li{margin:3px 0}
+.ai-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;font-size:12px}
+.typing{animation:blink 1.2s ease-in-out infinite}
+@keyframes blink{50%{opacity:.4}}
+@media (max-width:370px){.rkpi{grid-template-columns:repeat(3,1fr)}}

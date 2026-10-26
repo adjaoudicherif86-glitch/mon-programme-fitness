@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.4.1";
+const APP_VERSION = "6.5.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1014,24 +1014,57 @@ Règles :
 - Perte de poids : rythme sain 0,4 à 0,8 kg par semaine, apport suffisant en protéines (environ 1,6 à 2 g/kg), pas de régime extrême.
 - Sécurité : tu n'es pas médecin. En cas de douleur articulaire, douleur vive, malaise ou problème de santé, recommande d'arrêter l'exercice concerné et de consulter un professionnel. Pas de conseils sur des produits dopants.
 - Si la question n'a rien à voir avec le sport, la nutrition ou la récupération, réponds brièvement et ramène vers l'entraînement.`;
+/* Appel en flux (les mots s'affichent au fur et à mesure) + modèles du plus rapide adapté au plus robuste */
+function aiBody(contents, opts, thinkingOff) {
+  const gc = { temperature: 0.5, maxOutputTokens: opts.brief ? 900 : 1500 };
+  if (thinkingOff) gc.thinkingConfig = { thinkingBudget: 0 };
+  return JSON.stringify({ systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents, generationConfig: gc });
+}
+async function aiStreamOnce(model, body, onText) {
+  const ctrl = new AbortController(); let got = false;
+  const t1 = setTimeout(() => { if (!got) ctrl.abort(); }, 25000), t2 = setTimeout(() => ctrl.abort(), 90000);
+  try {
+    const r = await fetch(`${AI_API()}/models/${model}:streamGenerateContent?alt=sse`, { method: "POST", headers: { "x-goog-api-key": aiKey(), "Content-Type": "application/json" }, body, signal: ctrl.signal });
+    if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 300)); e.status = r.status; throw e; }
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "", out = "";
+    for (;;) {
+      const { done, value } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (!line.startsWith("data:")) continue;
+        try { const j = JSON.parse(line.slice(5)); const t = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+          const s = t.filter(p => !p.thought).map(p => p.text || "").join(""); if (s) { got = true; out += s; onText && onText(out); } } catch (e) {}
+      }
+    }
+    if (!out.trim()) throw new Error("EMPTY");
+    return out.trim();
+  } catch (e) { if (e.name === "AbortError") { const x = new Error("SLOW"); x.slow = true; throw x; } throw e; }
+  finally { clearTimeout(t1); clearTimeout(t2); }
+}
 async function aiAsk(question, opts = {}) {
   if (!aiKey()) throw new Error("NO_KEY");
   if (!navigator.onLine) throw new Error("OFFLINE");
-  const m = await aiModels();
-  const hist = opts.noHistory ? [] : aiChat().slice(-8);
+  let m = await aiModels();
+  const hist = opts.noHistory ? [] : aiChat().filter(h => !h.err).slice(-6);
   const contents = [{ role: "user", parts: [{ text: "Voici mes données d'entraînement à jour :\n" + aiContext() }] }, { role: "model", parts: [{ text: "Bien reçu, j'ai tes données." }] }];
   for (const h of hist) contents.push({ role: h.r === "u" ? "user" : "model", parts: [{ text: h.t }] });
   contents.push({ role: "user", parts: [{ text: question }] });
-  const body = JSON.stringify({ systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents, generationConfig: { temperature: 0.5, maxOutputTokens: 4096 } });
-  const call = async model => fetch(`${AI_API()}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": aiKey(), "Content-Type": "application/json" }, body });
-  let r = await call(m.main);
-  if (r.status === 429 && m.lite && m.lite !== m.main) r = await call(m.lite);
-  if (r.status === 404) { const m2 = await aiModels(true); r = await call(m2.main); }
-  if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 300)); e.status = r.status; throw e; }
-  const j = await r.json();
-  const txt = ((j.candidates || [])[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || "").join("").trim();
-  if (!txt) throw new Error("EMPTY");
-  return txt;
+  const order = opts.brief ? [m.lite, m.main] : [m.main, m.lite];
+  let last;
+  for (const model of [...new Set(order.filter(Boolean))]) {
+    for (const off of [true, false]) {
+      try { return await aiStreamOnce(model, aiBody(contents, opts, off), opts.onText); }
+      catch (e) {
+        last = e;
+        if (off && e.status === 400 && /thinking/i.test(e.message)) continue; // modèle qui refuse le réglage « réflexion » : on réessaie sans
+        if (e.status === 404) { m = await aiModels(true); }
+        break; // 429 (quota), lenteur, 404… → modèle suivant
+      }
+    }
+    if (last && !(last.status === 429 || last.slow || last.status === 404 || last.status >= 500)) break;
+  }
+  throw last || new Error("EMPTY");
 }
 function aiErr(e) {
   const m = String(e && e.message || e);
@@ -1042,6 +1075,7 @@ function aiErr(e) {
   if (/ 403 /.test(m)) return "Accès refusé par Google (clé restreinte ou service non activé pour ce projet).";
   if (/NO_MODEL/.test(m)) return "Aucun modèle Gemini disponible avec cette clé.";
   if (/EMPTY/.test(m)) return "Réponse vide (filtrée par Google). Reformule ta question.";
+  if (/SLOW/.test(m)) return "Google met trop de temps à répondre. Réessaie dans un instant.";
   return "Erreur du service IA : " + m.slice(0, 120);
 }
 function mdLite(t) {
@@ -1054,39 +1088,139 @@ function mdLite(t) {
   }
   return out + (inList ? "</ul>" : "");
 }
-const AI_SUGG = ["Fais le bilan de ma semaine", "Est-ce que je progresse bien ?", "Pourquoi je stagne et que faire ?", "Comment bien faire le développé couché ?", "Que manger après la séance pour perdre du gras ?", "Par quoi remplacer une machine occupée ?"];
+/* ───────────── Bilan de la semaine (calculé sur l'appareil, instantané) ───────────── */
+function weekReport() {
+  const wk = weeklyData(6); let k = 5;
+  const dow = (new Date().getDay() + 6) % 7;
+  if (wk[5].n === 0 && dow <= 1) k = 4; // lundi/mardi sans séance : on présente la semaine passée
+  const W = wk[k], P = wk[k - 1]; const label = k === 5 ? "Cette semaine" : "Semaine dernière";
+  const wsW = W.ws.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const good = [], bad = [], next = [], prs = [];
+  const end = new Date(W.start); end.setDate(end.getDate() + 7);
+  for (const p of prEvents()) { const d = parseDay(p.date); if (d >= W.start && d < end) prs.push(p); }
+  // régularité
+  if (W.n >= 3) good.push(`<b>${W.n} séances</b> : semaine complète${streakWeeks() > 1 ? `, ${streakWeeks()} semaines d'affilée` : ""}.`);
+  else if (k === 4 || dow >= 4) bad.push(`<b>${W.n} séance${W.n > 1 ? "s" : ""} sur 3</b>${k === 5 ? ` : il reste ${7 - dow} jour${7 - dow > 1 ? "s" : ""}` : ""}.`);
+  else if (W.n) good.push(`<b>${W.n} séance${W.n > 1 ? "s" : ""}</b> déjà faite${W.n > 1 ? "s" : ""}, objectif 3.`);
+  // volume
+  if (P.vol > 0 && W.vol > 0) { const d = (W.vol - P.vol) / P.vol * 100; if (d >= 5) good.push(`Volume en hausse : <b>${fmtVol(W.vol)}</b> (${pctTxt(d)} vs semaine d'avant).`); else if (d <= -20 && (k === 4 || dow >= 5)) bad.push(`Volume en baisse : <b>${fmtVol(W.vol)}</b> (${pctTxt(d)}).`); }
+  // exercices : progrès / recul
+  const upEx = [], downEx = [];
+  for (const w of wsW) for (const id in w.entries) {
+    const e = exOf(id); if (!e || !doneSets(w, id).length) continue;
+    const prev = prevFor(id, w.id, w.date); if (!prev || prev.w.date >= w.date) continue;
+    const a = bestOf(id, w), b = bestOf(id, prev.w); if (!a || !b) continue;
+    if (a.score > b.score + 1e-9) upEx.push(e.nom); else if (b.score > 0 && a.score < b.score * 0.93 && !e.assist) downEx.push(e.nom);
+  }
+  if (upEx.length) good.push(`En progrès par rapport à la séance précédente : <b>${esc([...new Set(upEx)].join(", "))}</b>.`);
+  if (downEx.length) bad.push(`En recul : <b>${esc([...new Set(downEx)].join(", "))}</b> (fatigue, sommeil, alimentation ?).`);
+  // séries non validées
+  let planned = 0, done = 0; for (const w of wsW) { planned += wTotalSets(w); done += wSets(w); }
+  if (planned && done / planned < 0.85) bad.push(`<b>${planned - done} série${planned - done > 1 ? "s" : ""} non validée${planned - done > 1 ? "s" : ""}</b> sur ${planned}.`);
+  // cardio
+  const cardio = wsW.filter(w => w.cardio && w.cardio.done).length;
+  if (W.n) (cardio >= Math.min(2, W.n) ? good : bad).push(`Cardio fait <b>${cardio}/${W.n}</b> séance${W.n > 1 ? "s" : ""}.`);
+  // alertes
+  for (const a of coachAlerts()) { if (a.lvl === "warn" && a.t !== "Poids" && a.t !== "Stagnation") bad.push(`<b>${esc(a.t)}</b> : ${esc(a.m)}`); if (a.t === "Stagnation" || a.t === "Équilibre") bad.push(esc(a.m).replace(/^([^:]+):/, "<b>$1</b> :")); if (a.t === "Poids") (a.lvl === "good" ? good : bad).push(esc(a.m)); }
+  // poids de la semaine
+  const st = wgStats(); let wdelta = null;
+  if (st) { const inW = st.daily.filter(x => { const d = parseDay(x.date); return d >= W.start && d < end; }); if (inW.length) wdelta = st.wk; }
+  // priorités
+  const ups = usedExercises().map(e => ({ e, ch: coach(e.id) })).filter(x => x.ch && x.ch.up).slice(0, 2);
+  for (const x of ups) next.push(`<b>${esc(x.e.nom)}</b> : ${esc(x.ch.txt)}.`);
+  const stalls = usedExercises().filter(e => { const c = coach(e.id); return c && c.stall; });
+  if (stalls.length) next.push(`<b>${esc(stalls[0].nom)}</b> : garde la charge et vise +1 répétition par série.`);
+  if (W.n < 3) next.push(`Bloque tes <b>3 séances</b> dans ton agenda (lundi, mercredi, vendredi).`);
+  if (!st || (st && Math.round((startDay(new Date()) - parseDay(st.daily[st.daily.length - 1].date)) / 864e5) >= 6)) next.push(`<b>Pèse-toi</b> une fois cette semaine, le matin à jeun.`);
+  return { label, W, P, good, bad, next: next.slice(0, 3), prs, wdelta, st };
+}
+function reportHTML() {
+  const r = weekReport(); const W = r.W;
+  if (!live().length) return `<div class="card empty" style="padding:22px">Termine ta première séance : le coach préparera ton bilan automatiquement.</div>`;
+  const li = (arr, cls) => arr.length ? `<ul class="rlist ${cls}">${arr.map(x => `<li>${x}</li>`).join("")}</ul>` : `<p class="mut" style="font-size:13px;margin:4px 0 0">Rien à signaler.</p>`;
+  return `<div class="card report">
+    <div class="rhead"><div><div class="eyebrow">${r.label}</div><div class="disp" style="font-size:22px;margin-top:4px">${W.start.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })} – ${new Date(W.start.getTime() + 6 * 864e5).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</div></div></div>
+    <div class="rkpi">
+      <div><b>${W.n}<span class="dim">/3</span></b><small>séances</small></div>
+      <div><b>${W.sets}</b><small>séries</small></div>
+      <div><b>${W.vol >= 1000 ? (W.vol / 1000).toFixed(1).replace(".", ",") : Math.round(W.vol)}<span class="dim">${W.vol >= 1000 ? " t" : " kg"}</span></b><small>volume</small></div>
+      <div><b>${r.prs.length}</b><small>record${r.prs.length > 1 ? "s" : ""}</small></div>
+      <div><b>${r.wdelta == null ? "–" : (r.wdelta <= 0 ? "−" : "+") + fmtKg(Math.abs(Math.round(r.wdelta * 10) / 10))}</b><small>poids</small></div>
+    </div>
+    <div class="rsec"><h4>✓ Points positifs</h4>${li(r.good, "good")}</div>
+    <div class="rsec"><h4>! À améliorer</h4>${li(r.bad, "bad")}</div>
+    ${r.prs.length ? `<div class="rsec"><h4>★ Records</h4><ul class="rlist">${r.prs.map(p => `<li><b>${esc(p.ex.nom)}</b> : ${setTxt(p.ex, { kg: p.b.k, reps: p.b.r })} <span class="mut">(${esc(fmtShort(p.date))})</span></li>`).join("")}</ul></div>` : ""}
+    <div class="rsec"><h4>→ Priorités pour la suite</h4>${li(r.next, "next")}</div>
+  </div>`;
+}
+
+/* ───────────── Analyse IA automatique (mise en cache, rafraîchie quand tes données changent) ───────────── */
+const dataHash = () => [isoDay(), live().length, live().reduce((a, w) => a > (w.updatedAt || "") ? a : (w.updatedAt || ""), ""), wgLive().length, (wgLive().slice(-1)[0] || {}).kg, DB.settings.aiShareWeight].join("|");
+function briefCache() { try { return JSON.parse(localStorage.getItem("mpf.coachbrief") || "null"); } catch (e) { return null; } }
+let briefBusy = false, briefText = "", briefErr = "";
+async function runBrief(force) {
+  if (briefBusy || !aiKey() || !live().length) return;
+  const c = briefCache(); if (!force && c && c.hash === dataHash()) return;
+  briefBusy = true; briefText = ""; briefErr = ""; paintBrief();
+  try {
+    const t = await aiAsk("Analyse ma semaine d'entraînement sans que je te pose de question. Réponds en 4 parties courtes avec ces titres en gras : **Points positifs**, **À améliorer**, **Records**, **Mes 3 priorités** (actions concrètes avec charges et répétitions pour mes prochaines séances). 150 mots maximum, phrases courtes, cite mes chiffres.", { brief: true, noHistory: true, onText: s => { briefText = s; paintBrief(); } });
+    try { localStorage.setItem("mpf.coachbrief", JSON.stringify({ hash: dataHash(), at: Date.now(), text: t })); } catch (e) {}
+    briefText = "";
+  } catch (e) { briefErr = aiErr(e); }
+  finally { briefBusy = false; paintBrief(); }
+}
+function briefInner() {
+  const c = briefCache();
+  if (briefBusy) return `<div class="ai-body">${briefText ? mdLite(briefText) : `<p class="mut typing">Le coach analyse ta semaine…</p>`}</div>`;
+  if (briefErr) return `<div class="ai-body"><p class="mut">⚠ ${esc(briefErr)}</p></div><button class="chip" data-act="brief-refresh">Réessayer</button>`;
+  if (c) return `<div class="ai-body">${mdLite(c.text)}</div><div class="ai-foot"><span class="dim">Analyse ${ago(new Date(c.at).toISOString())}${c.hash !== dataHash() ? " · nouvelles données" : ""}</span><button class="chip" data-act="brief-refresh">Actualiser</button></div>`;
+  return `<div class="ai-body"><p class="mut typing">Le coach analyse ta semaine…</p></div>`;
+}
+function paintBrief() { const el = $("#brief"); if (el) el.innerHTML = briefInner(); }
+
+const AI_SUGG = ["Est-ce que je progresse bien ?", "Pourquoi je stagne et que faire ?", "Comment bien faire le développé couché ?", "Que manger après la séance pour perdre du gras ?", "Par quoi remplacer une machine occupée ?", "Combien de temps pour atteindre mon objectif de poids ?"];
+let chatPending = null; // { q, text }
 function vCoach() {
   const alerts = (alertCache = coachAlerts());
   const chat = aiChat(); const key = aiKey();
-  const head = `<header class="top"><div><div class="eyebrow">Alertes et conseils</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("coach")}`;
-  const al = `<div class="sec-title"><h2 class="disp">Alertes</h2><span class="mut" style="font-size:12px">automatiques · hors ligne</span></div>
-    ${alerts.length ? alerts.map(alertHTML).join("") : `<div class="card empty" style="padding:22px">Rien à signaler pour l'instant. Termine quelques séances : le coach surveillera tes progrès, ta régularité et ton poids.</div>`}`;
+  const head = `<header class="top"><div><div class="eyebrow">Ton coach a analysé tes données</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("coach")}`;
+  const rep = `<div class="sec-title"><h2 class="disp">Bilan</h2><span class="mut" style="font-size:12px">automatique · instantané</span></div>${reportHTML()}`;
+  const brief = key && live().length ? `<div class="sec-title"><h2 class="disp">L'avis du coach IA</h2><span class="mut" style="font-size:12px">Gemini</span></div><div class="card pad aicard" id="brief">${briefInner()}</div>` : "";
+  const warn = alerts.filter(a => a.lvl === "warn");
+  const al = warn.length ? `<div class="sec-title"><h2 class="disp">Alertes</h2></div>${warn.map(alertHTML).join("")}` : "";
   let ia;
-  if (!key) ia = `<div class="card pad">
-      <p style="margin:0 0 10px">Pose tes questions à un coach IA qui connaît tes séances, tes records et ton poids. Il utilise <b>Gemini</b> de Google, gratuit avec ta propre clé.</p>
-      <ol class="mini-steps"><li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> et connecte-toi avec ton compte Google.</li><li>Touche <b>Create API key</b> (ou réutilise celle de ta veille IA), puis copie-la.</li><li>Colle-la ci-dessous.</li></ol>
+  if (!key) ia = `<div class="sec-title"><h2 class="disp">Coach IA</h2><span class="mut" style="font-size:12px">Gemini</span></div><div class="card pad">
+      <p style="margin:0 0 10px">Active le coach IA : il commentera ton bilan automatiquement et répondra à tes questions en connaissant tes séances, tes records et ton poids. Gratuit avec ta propre clé Gemini.</p>
+      <ol class="mini-steps"><li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> et connecte-toi avec ton compte Google.</li><li>Touche <b>Créer une clé API</b>, puis copie-la.</li><li>Colle-la ci-dessous (et nulle part ailleurs).</li></ol>
       <div class="field"><label for="ai-key">Clé Gemini</label><input id="ai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle ta clé Gemini"></div>
-      <p class="dim" style="font-size:12px;margin:0 0 12px">La clé reste uniquement sur cet appareil (jamais dans le code, la synchro ou les sauvegardes). À chaque question, un résumé de tes séances${DB.settings.aiShareWeight === false ? "" : " et de ton poids"} est envoyé à Google pour répondre. Sur l'offre gratuite, Google peut utiliser ces échanges pour améliorer ses services : n'y mets pas d'informations sensibles.</p>
+      <p class="dim" style="font-size:12px;margin:0 0 12px">La clé reste uniquement sur cet appareil (jamais dans le code, la synchro ou les sauvegardes). Un résumé de tes séances${DB.settings.aiShareWeight === false ? "" : " et de ton poids"} est envoyé à Google pour répondre ; sur l'offre gratuite, Google peut utiliser ces échanges pour améliorer ses services.</p>
       <button class="btn pri block" data-act="ai-key">Activer le coach IA</button></div>`;
-  else ia = `<div class="card pad chat" id="chat">
-      ${chat.length ? chat.map(h => `<div class="msg ${h.r === "u" ? "me" : "ai"}">${h.r === "u" ? esc(h.t) : mdLite(h.t)}</div>`).join("") : `<p class="mut" style="margin:0 0 4px;font-size:14px">Pose une question sur tes exercices, ta progression, ta récupération ou ton poids. Le coach connaît tes ${live().length} séance(s) enregistrée(s).</p>`}
-      ${aiBusy ? `<div class="msg ai typing">Le coach réfléchit…</div>` : ""}
-    </div>
+  else ia = `<div class="sec-title"><h2 class="disp">Poser une question</h2></div>
     <div class="chips sugg">${AI_SUGG.map(s => `<button class="chip" data-act="ai-sugg">${esc(s)}</button>`).join("")}</div>
-    <div class="ask"><textarea id="ai-q" rows="2" placeholder="Ta question au coach…" aria-label="Question au coach"></textarea><button class="btn pri" data-act="ai-send" ${aiBusy ? "disabled" : ""} aria-label="Envoyer">↑</button></div>
+    <div class="ask"><textarea id="ai-q" rows="2" placeholder="Ta question au coach…" aria-label="Question au coach"></textarea><button class="btn pri" data-act="ai-send" ${chatPending ? "disabled" : ""} aria-label="Envoyer">↑</button></div>
+    ${chat.length || chatPending ? `<div class="card pad chat" id="chat">
+      ${chatPending ? `<div class="msg me">${esc(chatPending.q)}</div><div class="msg ai" id="pending">${chatPending.text ? mdLite(chatPending.text) : `<span class="mut typing">Le coach écrit…</span>`}</div>` : ""}
+      ${chat.slice().reverse().map(h => `<div class="msg ${h.r === "u" ? "me" : "ai"}">${h.r === "u" ? esc(h.t) : mdLite(h.t)}</div>`).join("")}
+    </div>` : ""}
     <div class="row2" style="margin-top:10px"><label class="chip" style="height:auto;padding:8px 12px;cursor:pointer"><input type="checkbox" id="ai-w" ${DB.settings.aiShareWeight === false ? "" : "checked"} style="accent-color:#fff"> Partager mon poids</label>
       <button class="chip" data-act="ai-clear" style="justify-content:center">Effacer la conversation</button></div>
     <button class="btn ghost sm block" style="margin-top:10px" data-act="ai-off">Retirer la clé Gemini de cet appareil</button>
     <p class="dim" style="font-size:12px;margin:8px 2px 0">Conseils générés par une IA à partir de tes données : ils peuvent se tromper et ne remplacent pas un coach ou un médecin.</p>`;
-  return head + al + `<div class="sec-title"><h2 class="disp">Coach IA</h2><span class="mut" style="font-size:12px">Gemini</span></div>` + ia;
+  if (key) setTimeout(() => runBrief(false), 0);
+  return head + rep + brief + ia;
 }
 async function aiSend(q) {
-  q = (q || "").trim(); if (!q || aiBusy) return;
-  const chat = aiChat(); chat.push({ r: "u", t: q, at: Date.now() }); aiSaveChat(chat);
-  aiBusy = true; render(true); const c = $("#chat"); if (c) c.lastElementChild.scrollIntoView({ block: "end" });
-  try { const a = await aiAsk(q === AI_SUGG[0] ? "Fais mon bilan de la semaine : ce qui va bien, ce qui coince, et 3 actions précises pour la semaine prochaine (séances, charges, poids)." : q, {}); const c2 = aiChat(); c2.push({ r: "a", t: a, at: Date.now() }); aiSaveChat(c2); }
-  catch (e) { const c2 = aiChat(); c2.push({ r: "a", t: "⚠ " + aiErr(e), at: Date.now(), err: true }); aiSaveChat(c2); }
-  finally { aiBusy = false; if (route().name === "coach") { render(true); const c3 = $("#chat"); if (c3 && c3.lastElementChild) c3.lastElementChild.scrollIntoView({ block: "start", behavior: "smooth" }); } }
+  q = (q || "").trim(); if (!q || chatPending) return;
+  chatPending = { q, text: "" }; render(true);
+  const paint = () => { const el = $("#pending"); if (el) el.innerHTML = chatPending.text ? mdLite(chatPending.text) : `<span class="mut typing">Le coach écrit…</span>`; };
+  const scroll = () => { const el = $("#pending"); if (el) el.scrollIntoView({ block: "nearest" }); };
+  setTimeout(scroll, 30);
+  let answer, err = false;
+  try { answer = await aiAsk(q, { onText: s => { chatPending.text = s; paint(); } }); }
+  catch (e) { answer = "⚠ " + aiErr(e); err = true; }
+  const c = aiChat(); c.push({ r: "u", t: q, at: Date.now() }); c.push({ r: "a", t: answer, at: Date.now(), err }); aiSaveChat(c);
+  chatPending = null;
+  if (route().name === "coach") render(true);
 }
 
 /* ───────────── Poids ───────────── */
@@ -1630,7 +1764,8 @@ function handleAct(ev) {
     case "ai-send": aiSend($("#ai-q").value); break;
     case "ai-sugg": aiSend(el.textContent); break;
     case "ai-clear": aiSaveChat([]); render(true); break;
-    case "ai-off": try { localStorage.removeItem("mpf.aikey"); localStorage.removeItem("mpf.aimodel"); } catch (e) {} render(true); toast("Clé retirée de cet appareil."); break;
+    case "brief-refresh": runBrief(true); break;
+    case "ai-off": try { localStorage.removeItem("mpf.aikey"); localStorage.removeItem("mpf.aimodel"); localStorage.removeItem("mpf.coachbrief"); } catch (e) {} render(true); toast("Clé retirée de cet appareil."); break;
     case "check-update": (async () => {
       toast("Recherche d'une nouvelle version…");
       try {
