@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.3.0";
+const APP_VERSION = "6.3.1";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1001,7 +1001,7 @@ function vSettings() {
     <div class="sec-title"><h2 class="disp">Zone sensible</h2></div>
     <button class="btn ghost block" data-act="wipe">${I.trash}Tout effacer de ce navigateur</button>
     <div class="credits">
-      Version ${APP_VERSION}.${localStorage.getItem("mpf.backup.v5") ? ` <button class="chip" data-act="dl-backup" style="height:24px">Copie de sécurité V5</button>` : ""}<br>
+      Version ${APP_VERSION}. <button class="chip" data-act="check-update" style="height:24px">Vérifier les mises à jour</button>${localStorage.getItem("mpf.backup.v5") ? ` <button class="chip" data-act="dl-backup" style="height:24px">Copie de sécurité V5</button>` : ""}<br>
       Photos : <a href="https://github.com/yuhonas/free-exercise-db" target="_blank" rel="noopener">free-exercise-db</a> (dédiées au domaine public, licence Unlicense), converties en noir et blanc.<br>
       Synchronisation : <a href="https://github.com/supabase/supabase-js" target="_blank" rel="noopener">supabase-js</a> (licence MIT).<br>
       Planches anatomiques : tracés de <a href="https://github.com/HichamELBSI/react-native-body-highlighter" target="_blank" rel="noopener">react-native-body-highlighter</a> (licence MIT, © 2022 ELABBASSI Hicham), recolorés.<br>
@@ -1443,6 +1443,18 @@ function handleAct(ev) {
     }
     case "restore": { const x = DB.workouts.find(y => y.id === el.dataset.id); if (x) { x.deleted = false; markDirty(x); saveNow(); render(); toast("Séance restaurée ✓"); } break; }
     case "export": doExport(); break;
+    case "check-update": (async () => {
+      toast("Recherche d'une nouvelle version…");
+      try {
+        const r = await fetch("index.html?check=" + Date.now(), { cache: "no-store" }); const t = await r.text();
+        const m = t.match(/app\.js\?v=([\d.]+)/); const latest = m ? m[1] : null;
+        if (latest && latest !== APP_VERSION) {
+          if (window.__mpfReg) { try { await window.__mpfReg.update(); } catch (e) {} }
+          if ("caches" in window) { const ks = await caches.keys(); await Promise.all(ks.filter(k => k.startsWith("mpf-") && k !== "mpf-img" && k !== "mpf-fonts").map(k => caches.delete(k))); }
+          toast("Version " + latest + " trouvée : rechargement…"); setTimeout(() => location.reload(), 800);
+        } else toast(latest ? "Tu as déjà la dernière version (" + APP_VERSION + ") ✓" : "Impossible de vérifier (hors connexion ?)");
+      } catch (e) { toast("Impossible de vérifier (hors connexion ?)"); }
+    })(); break;
     case "wsave": saveWeight(); break;
     case "wdel": { const x = DB.weights.find(y => y.id === el.dataset.id); if (!x) break; x.deleted = true; markDirty(x); saveNow(); render(true);
       toast("Pesée supprimée", () => { x.deleted = false; markDirty(x); saveNow(); render(true); }); break; }
@@ -1561,7 +1573,8 @@ view.addEventListener("keydown", ev => {
 
 /* ───────────── PWA ───────────── */
 if ("serviceWorker" in navigator && location.protocol === "https:") {
-  navigator.serviceWorker.register("sw.js").then(reg => {
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
+    window.__mpfReg = reg;
     reg.addEventListener("updatefound", () => {
       const nw = reg.installing; nw && nw.addEventListener("statechange", () => {
         if (nw.state === "installed" && navigator.serviceWorker.controller) toast("Nouvelle version disponible", () => location.reload(), "Recharger");

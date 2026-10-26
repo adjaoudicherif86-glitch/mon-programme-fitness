@@ -1,16 +1,16 @@
 /* Service worker : rend l'app disponible hors connexion (après une première visite en ligne).
    IMPORTANT : à chaque mise à jour du code, change VERSION ci-dessous. Tes données ne sont pas touchées. */
-const VERSION = "mpf-6.3.0";
+const VERSION = "mpf-6.3.1";
 const SHELL = [
   "./",
   "index.html",
-  "app.css?v=6.3.0",
-  "app.js?v=6.3.0",
-  "config.js?v=6.3.0",
-  "data.js?v=6.3.0",
+  "app.css?v=6.3.1",
+  "app.js?v=6.3.1",
+  "config.js?v=6.3.1",
+  "data.js?v=6.3.1",
   "vendor/supabase-2.117.2.js",
-  "library.json?v=6.3.0",
-  "anatomy-data.js?v=6.3.0",
+  "library.json?v=6.3.1",
+  "anatomy-data.js?v=6.3.1",
   "manifest.webmanifest",
   "fonts/archivo.woff2",
   "icons/icon-192.png",
@@ -73,7 +73,8 @@ self.addEventListener("fetch", e => {
   if (url.origin !== location.origin) return; // API GitHub / Supabase : jamais mis en cache
   if (url.pathname.endsWith("config.js")) { e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); return r; }).catch(() => caches.match(req, { ignoreSearch: true }))); return; }
   if (req.mode === "navigate") {
-    e.respondWith(fetch(req).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put("./", cp)); return r; }).catch(() => caches.match("./")));
+    // « no-cache » : on redemande toujours la page au serveur (sinon le cache de GitHub peut servir l'ancienne version ~10 min)
+    e.respondWith(fetch(req.url, { cache: "no-cache", credentials: "same-origin" }).then(r => { const cp = r.clone(); caches.open(VERSION).then(c => c.put("./", cp)); return r; }).catch(() => caches.match("./")));
     return;
   }
   e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); } return r; })));
