@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.4.0";
+const APP_VERSION = "6.4.1";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1065,7 +1065,7 @@ function vCoach() {
   if (!key) ia = `<div class="card pad">
       <p style="margin:0 0 10px">Pose tes questions à un coach IA qui connaît tes séances, tes records et ton poids. Il utilise <b>Gemini</b> de Google, gratuit avec ta propre clé.</p>
       <ol class="mini-steps"><li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> et connecte-toi avec ton compte Google.</li><li>Touche <b>Create API key</b> (ou réutilise celle de ta veille IA), puis copie-la.</li><li>Colle-la ci-dessous.</li></ol>
-      <div class="field"><label for="ai-key">Clé Gemini</label><input id="ai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…"></div>
+      <div class="field"><label for="ai-key">Clé Gemini</label><input id="ai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle ta clé Gemini"></div>
       <p class="dim" style="font-size:12px;margin:0 0 12px">La clé reste uniquement sur cet appareil (jamais dans le code, la synchro ou les sauvegardes). À chaque question, un résumé de tes séances${DB.settings.aiShareWeight === false ? "" : " et de ton poids"} est envoyé à Google pour répondre. Sur l'offre gratuite, Google peut utiliser ces échanges pour améliorer ses services : n'y mets pas d'informations sensibles.</p>
       <button class="btn pri block" data-act="ai-key">Activer le coach IA</button></div>`;
   else ia = `<div class="card pad chat" id="chat">
@@ -1623,7 +1623,7 @@ function handleAct(ev) {
     }
     case "restore": { const x = DB.workouts.find(y => y.id === el.dataset.id); if (x) { x.deleted = false; markDirty(x); saveNow(); render(); toast("Séance restaurée ✓"); } break; }
     case "export": doExport(); break;
-    case "ai-key": { const k = $("#ai-key").value.trim(); if (!/^AIza[\w-]{30,}$/.test(k)) { toast("Clé attendue : elle commence par AIza…"); break; }
+    case "ai-key": { const k = $("#ai-key").value.trim(); if (!/^[A-Za-z0-9._~-]{20,}$/.test(k)) { toast("Clé invalide : colle la clé complète copiée depuis Google AI Studio (sans espace)."); break; }
       try { localStorage.setItem("mpf.aikey", k); localStorage.removeItem("mpf.aimodel"); } catch (e) {}
       el.disabled = true;
       (async () => { try { await aiModels(true); render(true); toast("Coach IA activé ✓"); } catch (e) { try { localStorage.removeItem("mpf.aikey"); } catch (x) {} render(true); toast(aiErr(e)); } })(); break; }
