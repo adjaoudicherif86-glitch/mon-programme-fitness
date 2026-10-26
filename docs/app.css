@@ -350,3 +350,32 @@ div > .coach{margin:0}
 .pk-foot{position:sticky;bottom:calc(-18px - var(--safe-b));background:var(--s1);margin:0 -18px calc(-18px - var(--safe-b));padding:12px 18px calc(14px + var(--safe-b));border-top:1px solid var(--line)}
 .field select{appearance:none;-webkit-appearance:none}
 .pr.off > span:first-child{color:var(--dim);text-decoration:line-through}
+
+/* ───── V6.4 : coach ───── */
+.adot{font-style:normal;display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:9px;background:var(--txt);color:var(--inv);font-size:11px;font-weight:800;margin-left:4px;padding:0 4px}
+.seg button.on .adot{background:#000;color:#fff}
+.alert{display:flex;gap:12px;padding:14px;border:1px solid var(--line);border-radius:16px;margin-bottom:10px;background:var(--s1)}
+.alert .ai-ic{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:900;font-size:13px;flex:none;border:1.5px solid var(--mut);color:var(--mut)}
+.alert.warn{border-color:#fff}
+.alert.warn .ai-ic{background:#fff;color:#000;border-color:#fff}
+.alert.good .ai-ic{border-color:#fff;color:#fff}
+.alert b{font-size:14px}
+.alert p{margin:3px 0 0;font-size:14px;color:#d6d6d6;line-height:1.45}
+.homealert{display:block;text-decoration:none;margin-bottom:14px;border-color:#fff}
+.homealert p{margin:8px 0 0;font-size:13px;color:#d6d6d6}
+.mini-steps{margin:0 0 12px;padding-left:20px;font-size:14px;color:#d6d6d6}
+.mini-steps li{margin:4px 0}
+.mini-steps a{color:#fff}
+.chat{display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow-y:auto}
+.msg{padding:10px 13px;border-radius:16px;font-size:14.5px;line-height:1.5;max-width:92%}
+.msg p{margin:0 0 6px}.msg p:last-child{margin:0}
+.msg ul{margin:4px 0 6px;padding-left:18px}.msg li{margin:3px 0}
+.msg.me{align-self:flex-end;background:var(--txt);color:var(--inv);border-bottom-right-radius:4px}
+.msg.ai{align-self:flex-start;background:var(--s3);border-bottom-left-radius:4px}
+.msg.typing{color:var(--mut);font-style:italic}
+.sugg{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:10px 0}
+.sugg::-webkit-scrollbar{display:none}
+.sugg .chip{flex:none;cursor:pointer;color:var(--txt)}
+.ask{display:grid;grid-template-columns:1fr 54px;gap:8px;align-items:end}
+.ask textarea{width:100%;min-height:54px;max-height:140px;border-radius:14px;border:1px solid var(--line2);background:var(--s2);padding:12px 14px;font-size:16px;resize:none}
+.ask .btn{padding:0;font-size:22px;min-height:54px}

@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.3.1";
+const APP_VERSION = "6.4.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -286,6 +286,7 @@ function vHome() {
     <div class="row2"><a class="btn sec" href="#/programme/${s}">Voir</a>
       <button class="btn pri" data-act="start" data-s="${s}">${I.play}Commencer</button></div>
   </section>
+  ${(() => { const a = coachAlerts().filter(x => x.lvl === "warn"); return a.length ? `<a class="card pad homealert" href="#/coach"><div class="eyebrow">Coach · ${a.length} alerte${a.length > 1 ? "s" : ""}</div>${a.slice(0, 2).map(x => `<p><b>${esc(x.t)}</b> — ${esc(x.m.length > 110 ? x.m.slice(0, 108) + "…" : x.m)}</p>`).join("")}</a>` : ""; })()}
   ${weightCardHome()}
   <div class="sec-title"><h2 class="disp">Cette semaine</h2>${syncBadge()}</div>
   <div class="tiles">
@@ -842,7 +843,8 @@ function lineChart(pts, unit, opt = {}) {
 }
 const pctTxt = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v)) + " %";
 const delta = (a, b) => b ? (a - b) / b * 100 : null;
-function progSeg(cur) { return `<div class="seg seg2" role="tablist"><button role="tab" aria-selected="${cur === "stats"}" class="${cur === "stats" ? "on" : ""}" data-go="#/progres">Statistiques</button><button role="tab" aria-selected="${cur === "hist"}" class="${cur === "hist" ? "on" : ""}" data-go="#/historique">Historique</button></div>`; }
+function progSeg(cur) { const b = (k, h, l) => `<button role="tab" aria-selected="${cur === k}" class="${cur === k ? "on" : ""}" data-go="${h}">${l}${k === "coach" && alertCount() ? ` <i class="adot">${alertCount()}</i>` : ""}</button>`;
+  return `<div class="seg" role="tablist">${b("stats", "#/progres", "Stats")}${b("coach", "#/coach", "Coach")}${b("hist", "#/historique", "Historique")}</div>`; }
 function metricPts(e, metric) {
   return sorted().filter(w => doneSets(w, e.id).length).reverse().map(w => {
     const b = bestOf(e.id, w);
@@ -911,6 +913,180 @@ function vProgress(q, metric) {
   <div class="sec-title"><h2 class="disp">Records</h2><span class="mut" style="font-size:13px">gain depuis la 1re séance</span></div>
   <div class="card" style="padding:4px 16px">${used.map(x => { const p = prFor(x.id); const mp = metricPts(x, "max"); const g = mp.length > 1 ? (x.assist ? -delta(mp[mp.length - 1].y, mp[0].y) : delta(mp[mp.length - 1].y, mp[0].y)) : null;
     return `<a class="pr pr3" href="#/progres/${x.id}" style="text-decoration:none"><span>${esc(x.nom)}</span><b>${x.type === "time" ? p.r + " s" : fmtKg(p.k) + " kg × " + p.r}</b><em>${g == null ? "–" : pctTxt(g)}</em></a>`; }).join("")}</div>`;
+}
+
+/* ───────────── Coach : alertes automatiques (sans IA, hors ligne) ───────────── */
+function coachAlerts() {
+  const out = []; const ws = sorted(); const today = startDay(new Date());
+  if (!ws.length) return out;
+  // 1. régularité
+  const last = ws[0]; const days = Math.round((today - parseDay(last.date)) / 864e5);
+  if (days >= 6) out.push({ lvl: "warn", t: "Régularité", m: `Dernière séance il y a ${days} jours (${fmtDay(last.date, { weekday: "long", day: "numeric", month: "long" })}). Reprends avec la séance ${todaySession()}, même plus légère.` });
+  const wk = weeklyData(5); const cur = wk[4]; const dow = (new Date().getDay() + 6) % 7; // 0 = lundi
+  if (dow >= 4 && cur.n < 2 && days < 6) out.push({ lvl: "info", t: "Semaine en cours", m: `${cur.n} séance${cur.n > 1 ? "s" : ""} cette semaine. Il reste ${7 - dow} jour${7 - dow > 1 ? "s" : ""} pour viser 3 séances.` });
+  // 2. stagnation / prêt à monter / baisse de forme
+  const used = usedExercises(); const stall = [], up = [], drop = [];
+  for (const e of used) {
+    const ch = coach(e.id); if (ch && ch.stall) stall.push(e.nom); if (ch && ch.up) up.push(`${e.nom} (${ch.kg != null ? fmtKg(ch.kg) + " kg" : ch.txt.replace("Objectif : ", "")})`);
+    const h = ws.filter(w => doneSets(w, e.id).length).slice(0, 2);
+    if (h.length === 2 && e.type !== "time" && !e.assist) { const a = bestOf(e.id, h[0]).score, b = bestOf(e.id, h[1]).score; if (b > 0 && a < b * 0.9) drop.push(e.nom); }
+  }
+  if (stall.length) out.push({ lvl: "warn", t: "Stagnation", m: `3 séances sans progrès : ${stall.join(", ")}. Garde la charge, vise +1 répétition, soigne la technique, le sommeil et les protéines. Si ça dure encore 2 séances, baisse de 10 % et remonte.` });
+  if (drop.length >= 2) out.push({ lvl: "warn", t: "Baisse de forme", m: `Performance en baisse de plus de 10 % sur ${drop.join(", ")}. Fatigue, manque de sommeil ou déficit calorique trop fort ? Une séance plus légère peut aider.` });
+  if (up.length) out.push({ lvl: "good", t: "Prêt à monter", m: `Tu as atteint le haut de la fourchette : ${up.join(" · ")}.` });
+  // 3. records récents
+  const d7 = new Date(today); d7.setDate(d7.getDate() - 6);
+  const prs = prEvents().filter(p => parseDay(p.date) >= d7);
+  if (prs.length) out.push({ lvl: "good", t: "Records", m: `${prs.length} record${prs.length > 1 ? "s" : ""} battu${prs.length > 1 ? "s" : ""} cette semaine : ${[...new Set(prs.map(p => p.ex.nom))].join(", ")}. Bravo !` });
+  // 4. volume
+  const avg = (wk[0].vol + wk[1].vol + wk[2].vol + wk[3].vol) / 4;
+  if (dow >= 5 && avg > 0 && cur.vol < avg * 0.6 && cur.n > 0) out.push({ lvl: "info", t: "Volume", m: `Volume de la semaine (${fmtVol(cur.vol)}) nettement sous ta moyenne des 4 dernières semaines (${fmtVol(avg)}).` });
+  // 5. muscles délaissés (14 jours)
+  const d14 = new Date(today); d14.setDate(d14.getDate() - 13);
+  const mw = muscleWeek(ws.filter(w => parseDay(w.date) >= d14));
+  const progKeys = new Set(["A", "B", "C"].flatMap(s => progEx(s).flatMap(e => e.P).concat(((DB.settings.extras || {})[s] || []).flatMap(d => (exOf(d.id) || d).P || []))));
+  const zero = mw.filter(g => g.n === 0 && g.keys.some(k => progKeys.has(k))).map(g => g.nom);
+  if (zero.length && ws.length >= 3) out.push({ lvl: "info", t: "Équilibre", m: `Aucune série en 14 jours pour : ${zero.join(", ")}.` });
+  // 6. poids
+  const st = wgStats();
+  if (st) {
+    const lastW = st.daily[st.daily.length - 1]; const dw = Math.round((today - parseDay(lastW.date)) / 864e5);
+    if (st.slope != null && st.slope < -1) out.push({ lvl: "warn", t: "Poids", m: `Tu perds ${fmtKg(Math.abs(Math.round(st.slope * 10) / 10))} kg par semaine : c'est rapide. Vise 0,4 à 0,8 kg par semaine pour garder ton muscle (mange un peu plus, surtout des protéines).` });
+    else if (st.slope != null && st.slope > 0.2 && st.cur > st.goal) out.push({ lvl: "info", t: "Poids", m: `Ta moyenne remonte (+${fmtKg(Math.round(st.slope * 10) / 10)} kg/semaine) alors que ton objectif est ${fmtKg(st.goal)} kg.` });
+    else if (st.slope != null && st.slope < -0.2 && st.cur > st.goal) out.push({ lvl: "good", t: "Poids", m: `Bonne tendance : ${fmtKg(Math.round(st.slope * 10) / 10)} kg par semaine${st.eta ? `, arrivée estimée à ${fmtKg(st.goal)} kg en ${st.eta.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}` : ""}.` });
+    if (dw >= 7) out.push({ lvl: "info", t: "Pesée", m: `Pas de pesée depuis ${dw} jours. Une pesée par semaine (le matin, à jeun) suffit pour suivre la tendance.` });
+  } else out.push({ lvl: "info", t: "Pesée", m: "Ajoute une pesée dans l'onglet Poids pour suivre ton objectif de " + fmtKg(num(DB.settings.goalKg) || 77) + " kg." });
+  return out;
+}
+let alertCache = null;
+function alertCount() { if (!alertCache) alertCache = coachAlerts(); return alertCache.filter(a => a.lvl === "warn").length; }
+const alertHTML = a => `<div class="alert ${a.lvl}"><span class="ai-ic">${a.lvl === "warn" ? "!" : a.lvl === "good" ? "↑" : "i"}</span><div><b>${esc(a.t)}</b><p>${esc(a.m)}</p></div></div>`;
+
+/* ───────────── Coach IA (Gemini, clé personnelle gardée sur l'appareil) ───────────── */
+const AI_API = () => window.__mpfAiApi || "https://generativelanguage.googleapis.com/v1beta";
+const aiKey = () => { try { return localStorage.getItem("mpf.aikey") || ""; } catch (e) { return ""; } };
+function aiChat() { try { return JSON.parse(localStorage.getItem("mpf.coach") || "[]"); } catch (e) { return []; } }
+function aiSaveChat(c) { try { localStorage.setItem("mpf.coach", JSON.stringify(c.slice(-30))); } catch (e) {} }
+let aiBusy = false;
+async function aiModels(force) {
+  try { const c = JSON.parse(localStorage.getItem("mpf.aimodel") || "null"); if (c && !force && Date.now() - c.at < 7 * 864e5) return c; } catch (e) {}
+  const r = await fetch(`${AI_API()}/models?pageSize=200`, { headers: { "x-goog-api-key": aiKey() } });
+  if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 200)); e.status = r.status; throw e; }
+  const j = await r.json();
+  const ok = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => m.name.replace(/^models\//, ""))
+    .filter(n => /flash/.test(n) && !/(preview|exp|tts|live|image|audio|embed|thinking|8b)/.test(n));
+  const ver = n => (n.match(/gemini-(\d+(?:\.\d+)?)/) || [0, "0"])[1] * 1;
+  const best = arr => arr.sort((a, b) => ver(b) - ver(a) || a.length - b.length)[0];
+  const main = best(ok.filter(n => !/lite/.test(n))) || best(ok.slice());
+  const lite = best(ok.filter(n => /lite/.test(n))) || main;
+  if (!main) throw new Error("NO_MODEL");
+  const c = { main, lite, at: Date.now() }; try { localStorage.setItem("mpf.aimodel", JSON.stringify(c)); } catch (e) {} return c;
+}
+function aiContext() {
+  const L = [];
+  L.push(`Date du jour : ${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.`);
+  L.push(`Programme : full body 3 fois par semaine (A lundi, B mercredi, C vendredi), séries de 3, + 15–20 min de marche inclinée. Objectif : perdre du gras en gardant/gagnant du muscle.`);
+  for (const s of ["A", "B", "C"]) { const ex = progEx(s).map(e => `${e.nom} ${e.series}×${repTxt(e)}`).concat(((DB.settings.extras || {})[s] || []).map(d => (exOf(d.id) || d).nom + " (ajouté)")); L.push(`Séance ${s} : ${ex.join(" ; ")}.`); }
+  const ws = sorted();
+  L.push(`Séances terminées : ${ws.length}. Assiduité 4 dernières semaines : ${ws.filter(w => (startDay(new Date()) - parseDay(w.date)) / 864e5 < 28).length}/12. Semaines complètes d'affilée : ${streakWeeks()}.`);
+  L.push("Volume par semaine (kg, de la plus ancienne à la semaine en cours) : " + weeklyData(8).map(w => Math.round(w.vol)).join(", ") + ".");
+  L.push("Dernières séances (charge×répétitions des séries validées) :");
+  for (const w of ws.slice(0, 8)) {
+    const parts = Object.keys(w.entries).map(id => { const e = exOf(id); const d = doneSets(w, id); return e && d.length ? `${e.nom}: ${d.map(s => e.type === "time" ? num(s.reps) + "s" : `${fmtKg(num(s.kg) || 0)}×${num(s.reps)}`).join(", ")}${e.assist ? " (kg = aide)" : ""}` : null; }).filter(Boolean);
+    L.push(`- ${w.date} séance ${w.session}${w.durationMin ? " (" + w.durationMin + " min)" : ""} : ${parts.join(" | ")}${w.note ? " — note : " + w.note : ""}`);
+  }
+  L.push("Par exercice (record · conseil de progression) :");
+  for (const e of usedExercises()) { const p = prFor(e.id), ch = coach(e.id); L.push(`- ${e.nom} : record ${e.type === "time" ? p.r + " s" : fmtKg(p.k) + " kg × " + p.r}${ch ? " · " + ch.txt + (ch.stall ? " · STAGNATION" : "") : ""}`); }
+  if (DB.settings.aiShareWeight !== false) {
+    const st = wgStats();
+    if (st) L.push(`Poids : moyenne 7 j ${fmtKg(Math.round(st.cur * 10) / 10)} kg, départ ${fmtKg(st.start)} kg, objectif ${fmtKg(st.goal)} kg, tendance ${st.slope == null ? "inconnue" : fmtKg(Math.round(st.slope * 100) / 100) + " kg/semaine"}. Dernières pesées : ${st.daily.slice(-8).map(x => x.date + " " + fmtKg(num(x.kg))).join(", ")}.`);
+    else L.push(`Objectif de poids : ${fmtKg(num(DB.settings.goalKg) || 77)} kg (pas encore de pesée).`);
+  }
+  L.push("Alertes automatiques : " + (coachAlerts().map(a => a.t + " — " + a.m).join(" / ") || "aucune") + ".");
+  return L.join("\n");
+}
+const AI_SYSTEM = `Tu es le coach de musculation personnel de Chérif, dans son application « Mon Programme Fitness ». Il est débutant/intermédiaire, s'entraîne en salle (Basic-Fit) et veut perdre du gras pour atteindre son objectif de poids tout en progressant.
+Règles :
+- Réponds en français, en le tutoyant, de façon concrète, encourageante et courte (8 à 15 lignes maximum sauf si on te demande plus). Utilise des listes courtes et du **gras** pour l'essentiel.
+- Appuie-toi sur SES données fournies (charges, répétitions, dates, poids) et cite des chiffres précis. N'invente jamais de données ; si une info manque, dis-le.
+- Donne des actions précises pour la prochaine séance (charges, répétitions, repos, technique).
+- Progression : double progression (monter la charge quand le haut de la fourchette est atteint sur toutes les séries).
+- Perte de poids : rythme sain 0,4 à 0,8 kg par semaine, apport suffisant en protéines (environ 1,6 à 2 g/kg), pas de régime extrême.
+- Sécurité : tu n'es pas médecin. En cas de douleur articulaire, douleur vive, malaise ou problème de santé, recommande d'arrêter l'exercice concerné et de consulter un professionnel. Pas de conseils sur des produits dopants.
+- Si la question n'a rien à voir avec le sport, la nutrition ou la récupération, réponds brièvement et ramène vers l'entraînement.`;
+async function aiAsk(question, opts = {}) {
+  if (!aiKey()) throw new Error("NO_KEY");
+  if (!navigator.onLine) throw new Error("OFFLINE");
+  const m = await aiModels();
+  const hist = opts.noHistory ? [] : aiChat().slice(-8);
+  const contents = [{ role: "user", parts: [{ text: "Voici mes données d'entraînement à jour :\n" + aiContext() }] }, { role: "model", parts: [{ text: "Bien reçu, j'ai tes données." }] }];
+  for (const h of hist) contents.push({ role: h.r === "u" ? "user" : "model", parts: [{ text: h.t }] });
+  contents.push({ role: "user", parts: [{ text: question }] });
+  const body = JSON.stringify({ systemInstruction: { parts: [{ text: AI_SYSTEM }] }, contents, generationConfig: { temperature: 0.5, maxOutputTokens: 4096 } });
+  const call = async model => fetch(`${AI_API()}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": aiKey(), "Content-Type": "application/json" }, body });
+  let r = await call(m.main);
+  if (r.status === 429 && m.lite && m.lite !== m.main) r = await call(m.lite);
+  if (r.status === 404) { const m2 = await aiModels(true); r = await call(m2.main); }
+  if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 300)); e.status = r.status; throw e; }
+  const j = await r.json();
+  const txt = ((j.candidates || [])[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || "").join("").trim();
+  if (!txt) throw new Error("EMPTY");
+  return txt;
+}
+function aiErr(e) {
+  const m = String(e && e.message || e);
+  if (/NO_KEY/.test(m)) return "Ajoute d'abord ta clé Gemini.";
+  if (/OFFLINE|Failed to fetch|Load failed|NetworkError/.test(m)) return "Pas de connexion : le coach IA a besoin d'Internet (les alertes, elles, marchent hors ligne).";
+  if (/API key not valid|API_KEY_INVALID/.test(m) || / 400 /.test(m) && /key/i.test(m)) return "Clé Gemini invalide : vérifie-la dans Google AI Studio.";
+  if (/ 429 /.test(m)) return "Quota gratuit du jour atteint. Réessaie demain (il se remet à zéro chaque nuit).";
+  if (/ 403 /.test(m)) return "Accès refusé par Google (clé restreinte ou service non activé pour ce projet).";
+  if (/NO_MODEL/.test(m)) return "Aucun modèle Gemini disponible avec cette clé.";
+  if (/EMPTY/.test(m)) return "Réponse vide (filtrée par Google). Reformule ta question.";
+  return "Erreur du service IA : " + m.slice(0, 120);
+}
+function mdLite(t) {
+  let h = esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|\n)#{1,4} *(.+)/g, "$1<b>$2</b>");
+  const lines = h.split("\n"); let out = "", inList = false;
+  for (const l of lines) {
+    const m = l.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (m) { if (!inList) { out += "<ul>"; inList = true; } out += `<li>${m[1]}</li>`; }
+    else { if (inList) { out += "</ul>"; inList = false; } out += l.trim() ? `<p>${l}</p>` : ""; }
+  }
+  return out + (inList ? "</ul>" : "");
+}
+const AI_SUGG = ["Fais le bilan de ma semaine", "Est-ce que je progresse bien ?", "Pourquoi je stagne et que faire ?", "Comment bien faire le développé couché ?", "Que manger après la séance pour perdre du gras ?", "Par quoi remplacer une machine occupée ?"];
+function vCoach() {
+  const alerts = (alertCache = coachAlerts());
+  const chat = aiChat(); const key = aiKey();
+  const head = `<header class="top"><div><div class="eyebrow">Alertes et conseils</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("coach")}`;
+  const al = `<div class="sec-title"><h2 class="disp">Alertes</h2><span class="mut" style="font-size:12px">automatiques · hors ligne</span></div>
+    ${alerts.length ? alerts.map(alertHTML).join("") : `<div class="card empty" style="padding:22px">Rien à signaler pour l'instant. Termine quelques séances : le coach surveillera tes progrès, ta régularité et ton poids.</div>`}`;
+  let ia;
+  if (!key) ia = `<div class="card pad">
+      <p style="margin:0 0 10px">Pose tes questions à un coach IA qui connaît tes séances, tes records et ton poids. Il utilise <b>Gemini</b> de Google, gratuit avec ta propre clé.</p>
+      <ol class="mini-steps"><li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> et connecte-toi avec ton compte Google.</li><li>Touche <b>Create API key</b> (ou réutilise celle de ta veille IA), puis copie-la.</li><li>Colle-la ci-dessous.</li></ol>
+      <div class="field"><label for="ai-key">Clé Gemini</label><input id="ai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…"></div>
+      <p class="dim" style="font-size:12px;margin:0 0 12px">La clé reste uniquement sur cet appareil (jamais dans le code, la synchro ou les sauvegardes). À chaque question, un résumé de tes séances${DB.settings.aiShareWeight === false ? "" : " et de ton poids"} est envoyé à Google pour répondre. Sur l'offre gratuite, Google peut utiliser ces échanges pour améliorer ses services : n'y mets pas d'informations sensibles.</p>
+      <button class="btn pri block" data-act="ai-key">Activer le coach IA</button></div>`;
+  else ia = `<div class="card pad chat" id="chat">
+      ${chat.length ? chat.map(h => `<div class="msg ${h.r === "u" ? "me" : "ai"}">${h.r === "u" ? esc(h.t) : mdLite(h.t)}</div>`).join("") : `<p class="mut" style="margin:0 0 4px;font-size:14px">Pose une question sur tes exercices, ta progression, ta récupération ou ton poids. Le coach connaît tes ${live().length} séance(s) enregistrée(s).</p>`}
+      ${aiBusy ? `<div class="msg ai typing">Le coach réfléchit…</div>` : ""}
+    </div>
+    <div class="chips sugg">${AI_SUGG.map(s => `<button class="chip" data-act="ai-sugg">${esc(s)}</button>`).join("")}</div>
+    <div class="ask"><textarea id="ai-q" rows="2" placeholder="Ta question au coach…" aria-label="Question au coach"></textarea><button class="btn pri" data-act="ai-send" ${aiBusy ? "disabled" : ""} aria-label="Envoyer">↑</button></div>
+    <div class="row2" style="margin-top:10px"><label class="chip" style="height:auto;padding:8px 12px;cursor:pointer"><input type="checkbox" id="ai-w" ${DB.settings.aiShareWeight === false ? "" : "checked"} style="accent-color:#fff"> Partager mon poids</label>
+      <button class="chip" data-act="ai-clear" style="justify-content:center">Effacer la conversation</button></div>
+    <button class="btn ghost sm block" style="margin-top:10px" data-act="ai-off">Retirer la clé Gemini de cet appareil</button>
+    <p class="dim" style="font-size:12px;margin:8px 2px 0">Conseils générés par une IA à partir de tes données : ils peuvent se tromper et ne remplacent pas un coach ou un médecin.</p>`;
+  return head + al + `<div class="sec-title"><h2 class="disp">Coach IA</h2><span class="mut" style="font-size:12px">Gemini</span></div>` + ia;
+}
+async function aiSend(q) {
+  q = (q || "").trim(); if (!q || aiBusy) return;
+  const chat = aiChat(); chat.push({ r: "u", t: q, at: Date.now() }); aiSaveChat(chat);
+  aiBusy = true; render(true); const c = $("#chat"); if (c) c.lastElementChild.scrollIntoView({ block: "end" });
+  try { const a = await aiAsk(q === AI_SUGG[0] ? "Fais mon bilan de la semaine : ce qui va bien, ce qui coince, et 3 actions précises pour la semaine prochaine (séances, charges, poids)." : q, {}); const c2 = aiChat(); c2.push({ r: "a", t: a, at: Date.now() }); aiSaveChat(c2); }
+  catch (e) { const c2 = aiChat(); c2.push({ r: "a", t: "⚠ " + aiErr(e), at: Date.now(), err: true }); aiSaveChat(c2); }
+  finally { aiBusy = false; if (route().name === "coach") { render(true); const c3 = $("#chat"); if (c3 && c3.lastElementChild) c3.lastElementChild.scrollIntoView({ block: "start", behavior: "smooth" }); } }
 }
 
 /* ───────────── Poids ───────────── */
@@ -1378,6 +1554,7 @@ function route() {
   if (a === "historique") return { name: "hist" };
   if (a === "progres") return { name: "prog2", q: b, m: c };
   if (a === "poids") return { name: "poids", r: b };
+  if (a === "coach") return { name: "coach" };
   if (a === "reglages") return { name: "set" };
   return { name: "404" };
 }
@@ -1385,15 +1562,18 @@ function vNotFound() { return `<div class="empty"><div class="disp">Introuvable<
 let clockT;
 function render(keepScroll) {
   const r = route(); if (keepScroll !== true) closeSheet(); const y = scrollY;
-  const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q, r.m), poids: () => vWeight(r.r), set: vSettings };
+  const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q, r.m), poids: () => vWeight(r.r), coach: vCoach, set: vSettings };
   view.innerHTML = (map[r.name] || vNotFound)();
-  const navKey = r.name === "ex" ? "prog" : ["hd", "edit", "hist"].includes(r.name) ? "prog2" : r.name;
+  const navKey = r.name === "ex" ? "prog" : ["hd", "edit", "hist", "coach"].includes(r.name) ? "prog2" : r.name;
+  alertCache = null;
   $("#nav").innerHTML = navHTML(navKey);
   if (r.name !== "edit" && DB.editBuf) { DB.editBuf = null; save(); }
   clearInterval(clockT);
   if (r.name === "wk" && DB.draft) { const tick = () => { const c = $("#clock"); if (!c) return; const m = Math.floor((Date.now() - new Date(DB.draft.startedAt)) / 60000); c.textContent = m < 60 ? m + " min" : Math.floor(m / 60) + " h " + pad2(m % 60); }; tick(); clockT = setInterval(tick, 20000); }
   const gal = $("#gal"); if (gal) gal.addEventListener("scroll", () => { const i = Math.round(gal.scrollLeft / gal.clientWidth); $$("#dots i").forEach((d, k) => d.classList.toggle("on", k === i)); }, { passive: true });
   const sel = $("#exsel"); if (sel) sel.onchange = () => { location.hash = "#/progres/" + sel.value; };
+  const aw = $("#ai-w"); if (aw) aw.onchange = () => { DB.settings.aiShareWeight = aw.checked; saveNow(); };
+  const aq = $("#ai-q"); if (aq) aq.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey && matchMedia("(pointer:fine)").matches) { ev.preventDefault(); aiSend(aq.value); } };
   const wk = $("#wg-kg"); if (wk) wk.onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); saveWeight(); } };
   const imp = $("#imp"); if (imp) imp.onchange = () => imp.files[0] && doImport(imp.files[0]);
   const ar = $("#autorest"); if (ar) ar.onchange = () => { DB.settings.autoRest = ar.checked; saveNow(); };
@@ -1443,6 +1623,14 @@ function handleAct(ev) {
     }
     case "restore": { const x = DB.workouts.find(y => y.id === el.dataset.id); if (x) { x.deleted = false; markDirty(x); saveNow(); render(); toast("Séance restaurée ✓"); } break; }
     case "export": doExport(); break;
+    case "ai-key": { const k = $("#ai-key").value.trim(); if (!/^AIza[\w-]{30,}$/.test(k)) { toast("Clé attendue : elle commence par AIza…"); break; }
+      try { localStorage.setItem("mpf.aikey", k); localStorage.removeItem("mpf.aimodel"); } catch (e) {}
+      el.disabled = true;
+      (async () => { try { await aiModels(true); render(true); toast("Coach IA activé ✓"); } catch (e) { try { localStorage.removeItem("mpf.aikey"); } catch (x) {} render(true); toast(aiErr(e)); } })(); break; }
+    case "ai-send": aiSend($("#ai-q").value); break;
+    case "ai-sugg": aiSend(el.textContent); break;
+    case "ai-clear": aiSaveChat([]); render(true); break;
+    case "ai-off": try { localStorage.removeItem("mpf.aikey"); localStorage.removeItem("mpf.aimodel"); } catch (e) {} render(true); toast("Clé retirée de cet appareil."); break;
     case "check-update": (async () => {
       toast("Recherche d'une nouvelle version…");
       try {
