@@ -91,3 +91,17 @@ where not w.deleted;
 
 revoke all on public.series from anon;
 grant select on public.series to authenticated;
+
+-- 7. -- Journal alimentaire
+create table if not exists public.meals (
+  id uuid primary key, user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  date date not null, data jsonb not null, deleted boolean not null default false,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+alter table public.meals enable row level security;
+drop policy if exists "mes repas" on public.meals;
+create policy "mes repas" on public.meals for all to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+drop trigger if exists meals_touch on public.meals;
+create trigger meals_touch before insert or update on public.meals for each row execute function public.mpf_touch();
+grant select, insert, update, delete on public.meals to authenticated;
+alter table public.profil add column if not exists nutri jsonb;

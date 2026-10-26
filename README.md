@@ -17,6 +17,12 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
   - **Bilan de la semaine automatique** dès l'ouverture : chiffres clés, points positifs, points à améliorer, records, priorités (calculé sur l'appareil, instantané). Avec une clé Gemini, l'**avis du coach IA** s'écrit tout seul en dessous (mis en cache, rafraîchi quand tes données changent).
   - **Alertes automatiques**, gratuites et hors ligne : séances manquées, stagnation, baisse de forme, exercices prêts à monter en charge, records, muscles délaissés, perte de poids trop rapide ou qui remonte, pesée oubliée. Les alertes importantes s'affichent aussi sur l'accueil.
   - **Coach IA** (Gemini de Google, gratuit avec ta propre clé créée sur https://aistudio.google.com/apikey) : tu lui poses tes questions (« est-ce que je progresse ? », « comment faire tel exercice ? », bilan de la semaine…) et il répond à partir de tes séances, records et poids. La clé reste sur l'appareil. Un résumé de tes données est envoyé à Google à chaque question (option pour ne pas partager le poids) ; sur l'offre gratuite, Google peut utiliser ces échanges pour améliorer ses services. Quota gratuit limité par jour.
+- **Nutrition** (onglet Nutrition → Repas / Poids) : journal du jour par repas (petit-déjeuner, déjeuner, collation, dîner), calories et protéines/glucides/lipides face à tes objectifs, moyenne des 7 derniers jours. Quatre façons d'ajouter :
+  - **Photo du plat** : Gemini (même clé que le coach) reconnaît les aliments et estime grammes et calories ; tu corriges avant d'enregistrer. C'est une estimation.
+  - **Code-barres** : scan avec la caméra (ou saisie des chiffres), valeurs exactes d'Open Food Facts.
+  - **Recherche** dans la table officielle **Ciqual 2025** de l'Anses (3 341 aliments, utilisable hors ligne).
+  - **Saisie libre**.
+  Objectifs calculés à partir de ton poids, ta taille, ton âge et ton activité (formule de Mifflin-St Jeor, déficit modéré pour perdre environ 0,4 à 0,6 kg par semaine, ~1,8 g de protéines par kg), ou fixés à la main. Le coach en tient compte dans son bilan.
 - **Minuteur de repos** qui démarre quand tu valides une série.
 - **Cardio** : marche inclinée 15–20 min avec 3 niveaux.
 - **Installable sur l'écran d'accueil** de l'iPhone (PWA) et utilisable sans réseau une fois ouverte une première fois.
@@ -126,6 +132,7 @@ supabase/
 - **Photos des exercices** : [free-exercise-db](https://github.com/yuhonas/free-exercise-db), base dédiée au domaine public (licence Unlicense), converties en noir et blanc. Le dépôt ne documente pas le photographe d'origine ; si un ayant droit se manifeste, les photos seront remplacées.
 - **Planches anatomiques** : tracés de [react-native-body-highlighter](https://github.com/HichamELBSI/react-native-body-highlighter), licence MIT © 2022 ELABBASSI Hicham, découpés par muscle et recolorés.
 - **Synchronisation** : [supabase-js](https://github.com/supabase/supabase-js), licence MIT.
+- **Aliments** : table de composition nutritionnelle Ciqual 2025, Anses (Licence Ouverte / Etalab 2.0) ; produits emballés : Open Food Facts (ODbL) ; lecture des codes-barres : ZXing (licence Apache 2.0).
 - **Police** : [Archivo](https://github.com/Omnibus-Type/Archivo), SIL Open Font License 1.1.
 - Les vidéos sont des recherches YouTube ciblées (aucune vidéo n'est copiée dans l'appli).
 

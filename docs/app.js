@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.5.1";
+const APP_VERSION = "7.0.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -42,7 +42,7 @@ const thumbHTML = (id, cls = "thumb") => { const t = thumb(id); if (t) return `<
 /* ───────────── Stockage ───────────── */
 let storageOK = true;
 function blankDB() {
-  return { app: "mon-programme-fitness", version: 6, workouts: [], weights: [], draft: null, editBuf: null,
+  return { app: "mon-programme-fitness", version: 6, workouts: [], weights: [], meals: [], draft: null, editBuf: null,
     settings: { autoRest: true, goalKg: 77, startKg: null, profileUpdatedAt: null, profileDirty: false },
     sync: { url: "", key: "", userId: null, email: null, cursor: {}, lastAt: null, lastError: null } };
 }
@@ -60,7 +60,7 @@ function load() {
       settings: { ...b.settings, ...(d.settings || {}) },
       sync: { ...b.sync, ...(d.sync || {}), cursor: { ...((d.sync || {}).cursor || {}) } },
       workouts: Array.isArray(d.workouts) ? d.workouts : [],
-      weights: Array.isArray(d.weights) ? d.weights : [] };
+      weights: Array.isArray(d.weights) ? d.weights : [], meals: Array.isArray(d.meals) ? d.meals : [] };
     // tout ce qui n'a jamais été envoyé au cloud est marqué « à envoyer »
     for (const w of out.workouts) if (!w.syncedAt && w.dirty === undefined) w.dirty = true;
     return out;
@@ -184,6 +184,11 @@ const I = {
   dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>',
   ul: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5M4 21h16"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+  food: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M17 21V3c-2.2 0-4 2.5-4 6v4h4"/></svg>',
+  camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  barcode: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6v12M7 6v12M11 6v12M14 6v12M18 6v12M20 6v12"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
+  pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
   scale: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8.5 9.5a5 5 0 0 1 7 0L13 12"/></svg>',
   cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19.5 10 4 4 0 0 1 18 18z"/></svg>'
 };
@@ -237,7 +242,7 @@ function navHTML(cur) {
   const a = (h, k, ic, lb, extra = "") => `<a href="${h}" class="${cur === k ? "on" : ""} ${extra}" ${cur === k ? 'aria-current="page"' : ""}>${ic}<span>${lb}</span></a>`;
   return a("#/", "home", I.home, "Accueil") + a("#/programme/" + todaySession(), "prog", I.list, "Programme") +
     `<a href="#/seance" class="go ${cur === "wk" ? "on" : ""}" aria-label="${has ? "Reprendre la séance en cours" : "Démarrer une séance"}"><span class="pill">${I.play}</span>${has ? '<i class="dot"></i>' : ""}<span>Séance</span></a>` +
-    a("#/progres", "prog2", I.chart, "Progrès") + a("#/poids", "poids", I.scale, "Poids");
+    a("#/progres", "prog2", I.chart, "Progrès") + a("#/nutrition", "nutri", I.food, "Nutrition");
 }
 /* Programme personnalisé : exercices retirés d'une séance (l'historique est conservé) */
 const removedOf = s => ((DB.settings.removed || {})[s] || []);
@@ -1002,6 +1007,8 @@ function aiContext() {
     if (st) L.push(`Poids : moyenne 7 j ${fmtKg(Math.round(st.cur * 10) / 10)} kg, départ ${fmtKg(st.start)} kg, objectif ${fmtKg(st.goal)} kg, tendance ${st.slope == null ? "inconnue" : fmtKg(Math.round(st.slope * 100) / 100) + " kg/semaine"}. Dernières pesées : ${st.daily.slice(-8).map(x => x.date + " " + fmtKg(num(x.kg))).join(", ")}.`);
     else L.push(`Objectif de poids : ${fmtKg(num(DB.settings.goalKg) || 77)} kg (pas encore de pesée).`);
   }
+  const nd = nutriDays(7).filter(x => x.n);
+  if (nd.length) { const t = nutriTargets(); L.push(`Nutrition (${nd.length} jour(s) notés sur 7) : moyenne ${Math.round(nd.reduce((a, x) => a + x.kcal, 0) / nd.length)} kcal et ${Math.round(nd.reduce((a, x) => a + x.p, 0) / nd.length)} g de protéines par jour${t ? ` (objectifs ${t.kcal} kcal, ${t.p} g de protéines)` : ""}. Aujourd'hui : ${Math.round(nd[nd.length - 1].date === isoDay() ? nd[nd.length - 1].kcal : 0)} kcal.`); }
   L.push("Alertes automatiques : " + (coachAlerts().map(a => a.t + " — " + a.m).join(" / ") || "aucune") + ".");
   return L.join("\n");
 }
@@ -1124,6 +1131,16 @@ function weekReport() {
   if (W.n) (cardio >= Math.min(2, W.n) ? good : bad).push(`Cardio fait <b>${cardio}/${W.n}</b> séance${W.n > 1 ? "s" : ""}.`);
   // alertes
   for (const a of coachAlerts()) { if (a.lvl === "warn" && a.t !== "Poids" && a.t !== "Stagnation") bad.push(`<b>${esc(a.t)}</b> : ${esc(a.m)}`); if (a.t === "Stagnation" || a.t === "Équilibre") bad.push(esc(a.m).replace(/^([^:]+):/, "<b>$1</b> :")); if (a.t === "Poids") (a.lvl === "good" ? good : bad).push(esc(a.m)); }
+  // nutrition
+  const nd = nutriDays(7).filter(x => x.n), nt = nutriTargets();
+  if (nd.length >= 3 && nt) {
+    const ap = nd.reduce((a, x) => a + x.p, 0) / nd.length, ak = nd.reduce((a, x) => a + x.kcal, 0) / nd.length;
+    if (ap >= nt.p * 0.9) good.push(`Protéines au rendez-vous : <b>${Math.round(ap)} g/jour</b> en moyenne (objectif ${nt.p} g).`);
+    else if (ap < nt.p * 0.75) bad.push(`Protéines trop basses : <b>${Math.round(ap)} g/jour</b> pour un objectif de ${nt.p} g.`);
+    if (ak > nt.kcal * 1.1) bad.push(`Calories au-dessus de l'objectif : <b>${Math.round(ak)} kcal/jour</b> (objectif ${nt.kcal}).`);
+    else if (ak < nt.kcal * 0.75) bad.push(`Calories très basses : <b>${Math.round(ak)} kcal/jour</b>. Mange un peu plus pour garder ton muscle.`);
+    else good.push(`Calories dans la cible : <b>${Math.round(ak)} kcal/jour</b> en moyenne.`);
+  }
   // poids de la semaine
   const st = wgStats(); let wdelta = null;
   if (st) { const inW = st.daily.filter(x => { const d = parseDay(x.date); return d >= W.start && d < end; }); if (inW.length) wdelta = st.wk; }
@@ -1225,12 +1242,258 @@ async function aiSend(q) {
   if (route().name === "coach") render(true);
 }
 
+/* ───────────── Nutrition ───────────── */
+const SLOTS = [["pdj", "Petit-déjeuner"], ["dej", "Déjeuner"], ["col", "Collation"], ["din", "Dîner"]];
+const slotNow = () => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? "pdj" : h < 15 ? "dej" : h < 18 ? "col" : "din"; };
+const r1 = x => Math.round(x * 10) / 10;
+const f1 = x => fmtKg(r1(x));
+const mealsOf = d => DB.meals.filter(m => !m.deleted && m.date === d);
+function dayTotals(d) { const t = { kcal: 0, p: 0, c: 0, f: 0, n: 0, date: d }; for (const m of mealsOf(d)) { t.kcal += +m.kcal || 0; t.p += +m.p || 0; t.c += +m.c || 0; t.f += +m.f || 0; t.n++; } return t; }
+function nutriDays(n, end = isoDay()) { const out = []; const e = parseDay(end); for (let i = n - 1; i >= 0; i--) { const d = new Date(e); d.setDate(d.getDate() - i); out.push(dayTotals(isoDay(d))); } return out; }
+function nutriTargets() {
+  const N = DB.settings.nutri || {};
+  if (N.mode === "manuel" && N.kcal) return { kcal: N.kcal, p: N.p, c: N.c, f: N.f, manual: true };
+  const st = wgStats(); const w = st ? st.cur : (num(DB.settings.startKg) || null);
+  if (!w || !N.height || !N.age) return null;
+  const bmr = 10 * w + 6.25 * N.height - 5 * N.age + (N.sex === "f" ? -161 : 5);
+  const tdee = bmr * (N.activity || 1.45);
+  const goal = num(DB.settings.goalKg) || w;
+  let def = w > goal + 0.5 ? Math.min(600, Math.max(300, w * 0.005 * 7700 / 7), tdee * 0.25) : 0;
+  const kcal = Math.max(N.sex === "f" ? 1200 : 1500, Math.round((tdee - def) / 10) * 10);
+  const p = Math.round(Math.min(2.0 * goal, 1.8 * w)), f = Math.round(0.8 * w), c = Math.max(0, Math.round((kcal - p * 4 - f * 9) / 4));
+  return { kcal, p, c, f, bmr: Math.round(bmr), tdee: Math.round(tdee), def: Math.round(def), w };
+}
+function nutriSeg(cur) { return `<div class="seg seg2" role="tablist"><button role="tab" class="${cur === "repas" ? "on" : ""}" data-go="#/nutrition">Repas</button><button role="tab" class="${cur === "poids" ? "on" : ""}" data-go="#/poids">Poids</button></div>`; }
+const barRow = (lb, v, t, u) => `<div class="mrow"><span>${lb}</span><i><b style="width:${t ? Math.min(100, v / t * 100).toFixed(0) : 0}%" class="${t && v > t * 1.05 ? "over" : ""}"></b></i><em>${Math.round(v)}${t ? `<span class="dim"> / ${t}</span>` : ""} ${u}</em></div>`;
+function vNutri(d) {
+  const day = d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : isoDay();
+  const prev = new Date(parseDay(day)); prev.setDate(prev.getDate() - 1); const next = new Date(parseDay(day)); next.setDate(next.getDate() + 1);
+  const t = dayTotals(day), T = nutriTargets();
+  const week = nutriDays(7, day);
+  const logged = week.filter(x => x.n);
+  let html = `<header class="top"><div><div class="eyebrow">${T ? `Objectif ${T.kcal} kcal · ${T.p} g de protéines` : "Journal alimentaire"}</div><h1 class="disp" style="margin-top:6px">Nutrition</h1></div>${syncBadge(true)}</header>${nutriSeg("repas")}
+  <div class="daynav"><button class="iconbtn" data-go="#/nutrition/${isoDay(prev)}" aria-label="Jour précédent">${I.back}</button>
+    <b>${day === isoDay() ? "Aujourd'hui" : esc(fmtDay(day, { weekday: "long", day: "numeric", month: "long" }))}</b>
+    <button class="iconbtn" data-go="#/nutrition/${isoDay(next)}" ${day >= isoDay() ? "disabled style='opacity:.25'" : ""} aria-label="Jour suivant" style="transform:scaleX(-1)">${I.back}</button></div>
+  <section class="hero kcal">
+    <div class="eyebrow">Calories</div>
+    <div class="kbig disp">${Math.round(t.kcal).toLocaleString("fr-FR")}<small>${T ? " / " + T.kcal.toLocaleString("fr-FR") : ""} kcal</small></div>
+    ${T ? `<div class="pbar pbar-lg"><i style="width:${Math.min(100, t.kcal / T.kcal * 100).toFixed(1)}%"></i></div><div class="focus" style="margin:8px 0 0">${t.kcal <= T.kcal ? `Reste <b>${Math.round(T.kcal - t.kcal)} kcal</b>` : `<b>${Math.round(t.kcal - T.kcal)} kcal</b> au-dessus de l'objectif`}</div>` : `<div class="focus" style="margin:6px 0 0">Renseigne ta taille et ton âge plus bas pour calculer tes objectifs.</div>`}
+    <div style="margin-top:14px">${barRow("Protéines", t.p, T && T.p, "g")}${barRow("Glucides", t.c, T && T.c, "g")}${barRow("Lipides", t.f, T && T.f, "g")}</div>
+  </section>
+  <div class="addgrid">
+    <label class="addbtn">${I.camera}<span>Photo du plat</span><input type="file" accept="image/*" id="nu-photo" class="sr"></label>
+    <button class="addbtn" data-act="nu-scan">${I.barcode}<span>Code-barres</span></button>
+    <button class="addbtn" data-act="nu-search">${I.search}<span>Rechercher</span></button>
+    <button class="addbtn" data-act="nu-manual">${I.pen}<span>Saisie libre</span></button>
+  </div>`;
+  for (const [k, lb] of SLOTS) {
+    const ms = mealsOf(day).filter(m => (m.slot || "dej") === k);
+    const sk = ms.reduce((a, m) => a + (+m.kcal || 0), 0);
+    html += `<div class="sec-title"><h2 class="disp" style="font-size:19px">${lb}</h2><span class="mut" style="font-size:13px">${ms.length ? Math.round(sk) + " kcal" : ""}</span></div>`;
+    html += ms.length ? `<div class="card" style="padding:2px 16px">${ms.map(m => `<button class="meal" data-act="nu-edit" data-id="${m.id}"><span><b>${esc(m.name)}</b><small>${m.g ? fmtKg(m.g) + " g · " : ""}P ${Math.round(m.p || 0)} · G ${Math.round(m.c || 0)} · L ${Math.round(m.f || 0)}${m.src === "photo" ? " · estimation photo" : ""}${m.conflict ? " · conflit" : ""}</small></span><em>${Math.round(m.kcal || 0)}<small> kcal</small></em></button>`).join("")}</div>`
+      : `<button class="empty-slot" data-act="nu-search" data-slot="${k}">+ Ajouter</button>`;
+  }
+  // 7 jours
+  if (logged.length) {
+    const ak = Math.round(logged.reduce((a, x) => a + x.kcal, 0) / logged.length), ap = Math.round(logged.reduce((a, x) => a + x.p, 0) / logged.length);
+    html += `<div class="sec-title"><h2 class="disp">7 derniers jours</h2><span class="mut" style="font-size:13px">${logged.length} jour${logged.length > 1 ? "s" : ""} noté${logged.length > 1 ? "s" : ""}</span></div>
+    <div class="kgrid" style="grid-template-columns:1fr 1fr"><div class="tile"><b>${ak}<span class="dim" style="font-size:15px"> kcal</span></b><small>moyenne par jour noté${T ? " · objectif " + T.kcal : ""}</small></div>
+      <div class="tile"><b>${ap}<span class="dim" style="font-size:15px"> g</span></b><small>protéines par jour${T ? " · objectif " + T.p : ""}</small></div></div>
+    <div class="card pad" style="margin-top:10px">${kcalChart(week, T && T.kcal)}</div>`;
+  }
+  // objectifs
+  const N = DB.settings.nutri || {};
+  html += `<div class="sec-title"><h2 class="disp">Mes objectifs</h2></div><div class="card pad">
+    ${T && !T.manual ? `<p class="mut" style="font-size:13px;margin:0 0 12px">Calcul : métabolisme de base ${T.bmr} kcal × activité ${N.activity || 1.45} = ${T.tdee} kcal de dépense${T.def ? `, moins ${T.def} kcal pour perdre environ ${fmtKg(r1(T.def * 7 / 7700))} kg par semaine` : ""}. Protéines : ${T.p} g (environ 1,8 g par kg). Poids utilisé : ${fmtKg(r1(T.w))} kg.</p>` : ""}
+    <div class="wform" style="grid-template-columns:repeat(3,1fr)">
+      <div class="field"><label for="nu-h">Taille cm</label><input id="nu-h" inputmode="numeric" value="${esc(N.height || "")}" placeholder="178"></div>
+      <div class="field"><label for="nu-a">Âge</label><input id="nu-a" inputmode="numeric" value="${esc(N.age || "")}" placeholder="30"></div>
+      <div class="field"><label for="nu-s">Sexe</label><select id="nu-s"><option value="h" ${N.sex !== "f" ? "selected" : ""}>Homme</option><option value="f" ${N.sex === "f" ? "selected" : ""}>Femme</option></select></div>
+    </div>
+    <div class="field"><label for="nu-act">Activité</label><select id="nu-act">${[[1.3, "Assis toute la journée + 3 séances"], [1.45, "Un peu actif + 3 séances (recommandé)"], [1.6, "Travail debout / très actif + 3 séances"]].map(([v, l]) => `<option value="${v}" ${(N.activity || 1.45) == v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+    <label class="set-item" style="padding:6px 0 12px;border:0;cursor:pointer"><input type="checkbox" id="nu-man" ${N.mode === "manuel" ? "checked" : ""} style="width:22px;height:22px;accent-color:#fff"><div><b>Fixer mes objectifs moi-même</b></div></label>
+    <div class="wform" id="nu-manbox" style="grid-template-columns:repeat(4,1fr);${N.mode === "manuel" ? "" : "display:none"}">
+      ${[["kcal", "kcal"], ["p", "Prot. g"], ["c", "Gluc. g"], ["f", "Lip. g"]].map(([k, l]) => `<div class="field"><label for="nu-m${k}">${l}</label><input id="nu-m${k}" inputmode="numeric" value="${esc(N[k] || (T ? T[k] : ""))}"></div>`).join("")}
+    </div>
+    <button class="btn sec block" data-act="nu-goal">Enregistrer mes objectifs</button>
+    <p class="dim" style="font-size:12px;margin:10px 0 0">Repères généraux pour un adulte en bonne santé, pas un avis médical. Valeurs nutritionnelles : table Ciqual 2025 (Anses) et Open Food Facts. Les estimations par photo sont approximatives.</p>
+  </div>`;
+  return html;
+}
+function kcalChart(week, target) {
+  const W = 340, H = 160, pb = 24, pt = 16; const max = Math.max(target || 0, ...week.map(d => d.kcal), 1) * 1.1; const bw = W / week.length;
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Calories des 7 derniers jours">`;
+  week.forEach((d, i) => { const h = d.kcal ? Math.max(3, (H - pb - pt) * d.kcal / max) : 3; const x = i * bw + 6;
+    s += `<rect class="${d.kcal ? "bar" : "bar0"}" x="${x}" y="${H - pb - h}" width="${bw - 12}" height="${h}" rx="4"/>`;
+    s += `<text x="${x + (bw - 12) / 2}" y="${H - 8}" text-anchor="middle">${parseDay(d.date).toLocaleDateString("fr-FR", { weekday: "short" }).slice(0, 3)}</text>`; });
+  if (target) { const y = H - pb - (H - pb - pt) * target / max; s += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="#fff" stroke-dasharray="5 5" stroke-width="1.5"/><text x="${W}" y="${y - 5}" text-anchor="end" class="lbl">${target} kcal</text>`; }
+  return s + "</svg>";
+}
+
+/* --- Ajouter : base Ciqual (recherche) --- */
+let CIQ = null, ciqP = null;
+function loadCiq() { if (CIQ) return Promise.resolve(CIQ); if (!ciqP) ciqP = fetch("ciqual.json?v=" + APP_VERSION).then(r => r.json()).then(d => { d.foods.forEach(f => f.q = normQ(f[1])); CIQ = d; return d; }).catch(e => { ciqP = null; throw e; }); return ciqP; }
+const nu = { slot: null, q: "", item: null, photo: null };
+function recentFoods() { const seen = new Set(), out = []; for (const m of DB.meals.filter(m => !m.deleted && m.per100).slice().reverse()) { const k = m.name.toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(m); if (out.length >= 12) break; } return out; }
+function slotSelect(cur) { return `<div class="field"><label for="nu-slot">Repas</label><select id="nu-slot">${SLOTS.map(([k, l]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${l}</option>`).join("")}</select></div>`; }
+function searchList() {
+  const words = normQ(nu.q).split(/\s+/).filter(Boolean);
+  if (!words.length) { const rec = recentFoods(); return rec.length ? `<div class="eyebrow" style="margin:6px 0">Récents</div>` + rec.map(m => `<button class="li pk" data-act="nu-pick-recent" data-id="${m.id}"><span class="t"><b>${esc(m.name)}</b><small>${Math.round(m.per100.kcal)} kcal / 100 g · dernière portion ${m.g ? fmtKg(m.g) + " g" : "–"}</small></span></button>`).join("") : `<p class="mut" style="font-size:14px">Tape un aliment : « riz basmati », « poulet », « banane », « pain complet »…</p>`; }
+  if (!CIQ) return `<p class="mut">Chargement de la table des aliments…</p>`;
+  const full = normQ(nu.q).trim();
+  let list = CIQ.foods.filter(f => words.every(w => f.q.includes(w)));
+  list.sort((a, b) => (a.q.startsWith(full) ? 0 : 1) - (b.q.startsWith(full) ? 0 : 1) || a[1].length - b[1].length);
+  const total = list.length; list = list.slice(0, 60);
+  if (!total) return `<p class="mut" style="font-size:14px">Aucun aliment trouvé. Essaie un autre mot, ou utilise la saisie libre.</p>`;
+  return list.map(f => `<button class="li pk" data-act="nu-pick-ciq" data-code="${f[0]}"><span class="t"><b>${esc(f[1])}</b><small>${Math.round(f[3])} kcal · P ${f[4]} · G ${f[5]} · L ${f[6]} pour 100 g</small></span></button>`).join("") + (total > 60 ? `<p class="mut" style="font-size:12px;text-align:center">${total - 60} autres : précise ta recherche.</p>` : "");
+}
+function openSearch(slot) {
+  nu.slot = slot || nu.slot || slotNow(); nu.q = "";
+  sheet(`<div class="picker"><div class="pk-head"><h2 class="disp">Ajouter un aliment</h2>
+    <input id="nu-q" type="search" placeholder="Rechercher un aliment…" autocomplete="off" aria-label="Rechercher un aliment"></div>
+    <div id="nu-list" class="pk-list">${searchList()}</div>
+    <div class="pk-foot"><p class="dim" style="font-size:11px;margin:0;text-align:center">3 341 aliments · Table Ciqual 2025 (Anses)</p></div></div>`);
+  const q = $("#nu-q"); let tm;
+  q.addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(() => { nu.q = q.value; $("#nu-list").innerHTML = searchList(); }, 120); });
+  loadCiq().then(() => { const l = $("#nu-list"); if (l && nu.q) l.innerHTML = searchList(); }).catch(() => {});
+}
+/* fiche quantité commune (Ciqual, code-barres, récents) */
+function qtySheet(item) {
+  nu.item = item; const g0 = item.g || 100;
+  sheet(`<h2 class="disp" style="font-size:24px">${esc(item.name)}</h2><p>${esc(item.sub || "")}${item.per100 ? ` · ${Math.round(item.per100.kcal)} kcal pour 100 g` : ""}</p>
+    ${item.img ? `<img src="${esc(item.img)}" alt="" style="max-height:120px;border-radius:12px;margin:0 auto 12px;display:block" class="bw">` : ""}
+    <div class="field"><label for="nu-g">Quantité (g)</label><input id="nu-g" inputmode="decimal" value="${g0}"></div>
+    <div class="chips" style="margin-bottom:12px">${(item.portions || [50, 100, 150, 200, 250]).map(v => `<button class="chip" data-g="${v}">${v} g</button>`).join("")}</div>
+    <div class="qres" id="nu-res"></div>
+    ${slotSelect(nu.slot || slotNow())}
+    <div class="btns"><button class="btn pri" data-act="nu-add">Ajouter au journal</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  const upd = () => { const g = num($("#nu-g").value) || 0; const p = item.per100; $("#nu-res").innerHTML = `<b>${Math.round(p.kcal * g / 100)} kcal</b><span>P ${f1(p.p * g / 100)} g · G ${f1(p.c * g / 100)} g · L ${f1(p.f * g / 100)} g</span>`; };
+  $("#nu-g").addEventListener("input", upd); $$(".sheet [data-g]").forEach(b => b.onclick = () => { $("#nu-g").value = b.dataset.g; upd(); }); upd();
+}
+function addMeal(o) {
+  const m = { id: uid(), date: o.date || nu.day || isoDay(), slot: o.slot || slotNow(), name: o.name, g: o.g || null, kcal: r1(o.kcal), p: r1(o.p), c: r1(o.c), f: r1(o.f), per100: o.per100 || null, src: o.src, ref: o.ref || null };
+  markDirty(m); DB.meals.push(m); return m;
+}
+/* --- Code-barres : caméra (ZXing) + Open Food Facts --- */
+let scanCtl = null;
+async function stopScan() { try { if (scanCtl) scanCtl.reset(); } catch (e) {} scanCtl = null; }
+function openScan() {
+  nu.slot = nu.slot || slotNow();
+  sheet(`<h2 class="disp">Code-barres</h2><p>Vise le code-barres du produit. Les valeurs viennent d'Open Food Facts.</p>
+    <div class="scanbox"><video id="nu-video" playsinline muted></video><div class="scanline"></div></div>
+    <p class="mut" id="nu-scanmsg" style="font-size:13px;margin:8px 0">Démarrage de la caméra…</p>
+    <div class="row2"><div class="field" style="margin:0"><label for="nu-ean">Ou tape les chiffres</label><input id="nu-ean" inputmode="numeric" placeholder="3017620422003"></div>
+      <button class="btn sec" data-act="nu-ean" style="align-self:end">Chercher</button></div>
+    <div class="btns"><button class="btn ghost" data-act="nu-scan-close">Fermer</button></div>`);
+  const msg = t => { const el = $("#nu-scanmsg"); if (el) el.textContent = t; };
+  (async () => {
+    try {
+      if (!window.ZXing) await loadScript("vendor/zxing-0.21.3.min.js");
+      const Z = window.ZXing; const hints = new Map(); hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E]);
+      scanCtl = new Z.BrowserMultiFormatReader(hints, 300);
+      msg("Vise le code-barres, bien à plat et éclairé.");
+      await scanCtl.decodeFromConstraints({ video: { facingMode: "environment" } }, "nu-video", (res) => { if (res && scanCtl) { const code = res.getText(); stopScan(); if (navigator.vibrate) navigator.vibrate(40); lookupOFF(code); } });
+    } catch (e) { msg(/NotAllowed|Permission/i.test(String(e && (e.name || e.message))) ? "Accès à la caméra refusé : autorise-le dans Réglages > Safari (ou tape les chiffres)." : "Caméra indisponible ici : tape les chiffres du code-barres."); }
+  })();
+}
+async function lookupOFF(code) {
+  code = String(code).replace(/\D/g, ""); if (code.length < 8) { toast("Code-barres invalide."); return; }
+  const el = $("#nu-scanmsg"); if (el) el.textContent = "Recherche du produit " + code + "…";
+  try {
+    const base = window.__mpfOffApi || "https://world.openfoodfacts.org";
+    const r = await fetch(`${base}/api/v2/product/${code}.json?fields=product_name,product_name_fr,brands,nutriments,serving_quantity,serving_size,image_front_small_url`);
+    const j = await r.json();
+    if (!r.ok || j.status !== 1 || !j.product) throw new Error("NF");
+    const P = j.product, n = P.nutriments || {};
+    const kcal = n["energy-kcal_100g"] != null ? +n["energy-kcal_100g"] : n["energy_100g"] != null ? +n["energy_100g"] / 4.184 : null;
+    if (kcal == null) throw new Error("NONUT");
+    const name = (P.product_name_fr || P.product_name || "Produit " + code).trim();
+    await stopScan();
+    qtySheet({ name, sub: [P.brands, "Open Food Facts"].filter(Boolean).join(" · "), img: P.image_front_small_url, per100: { kcal, p: +n.proteins_100g || 0, c: +n.carbohydrates_100g || 0, f: +n.fat_100g || 0 },
+      g: +P.serving_quantity || 100, portions: [...new Set([+P.serving_quantity || 0, 30, 50, 100, 150, 200].filter(Boolean))].slice(0, 5), src: "code", ref: code });
+  } catch (e) {
+    const t = /NF/.test(e.message) ? `Produit ${code} introuvable dans Open Food Facts. Utilise la recherche ou la saisie libre.` : /NONUT/.test(e.message) ? "Ce produit n'a pas de valeurs nutritionnelles dans Open Food Facts. Utilise la saisie libre." : "Recherche impossible (pas de connexion ?).";
+    const el2 = $("#nu-scanmsg"); if (el2) el2.textContent = t; else toast(t);
+  }
+}
+/* --- Photo du plat : estimation par Gemini (même clé que le coach) --- */
+function resizeImage(file, max = 1024) {
+  return new Promise((ok, ko) => { const img = new Image(); const url = URL.createObjectURL(file);
+    img.onload = () => { const s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); ok(c.toDataURL("image/jpeg", 0.8)); };
+    img.onerror = () => { URL.revokeObjectURL(url); ko(new Error("IMG")); }; img.src = url; });
+}
+const PHOTO_PROMPT = `Analyse cette photo de repas. Identifie chaque aliment visible, estime sa quantité en grammes (portion réellement présente dans l'assiette) et ses valeurs nutritionnelles pour cette quantité, en t'appuyant sur des valeurs de référence (table Ciqual). Pense aux matières grasses de cuisson et aux sauces visibles. Si ce n'est pas de la nourriture, renvoie une liste vide. Noms en français, courts.`;
+const PHOTO_SCHEMA = { type: "OBJECT", properties: { aliments: { type: "ARRAY", items: { type: "OBJECT", properties: { nom: { type: "STRING" }, grammes: { type: "NUMBER" }, kcal: { type: "NUMBER" }, proteines: { type: "NUMBER" }, glucides: { type: "NUMBER" }, lipides: { type: "NUMBER" } }, required: ["nom", "grammes", "kcal", "proteines", "glucides", "lipides"] } }, commentaire: { type: "STRING" } }, required: ["aliments"] };
+async function analyzePhoto(dataUrl) {
+  if (!aiKey()) throw new Error("NO_KEY");
+  if (!navigator.onLine) throw new Error("OFFLINE");
+  let m = await aiModels();
+  const contents = [{ role: "user", parts: [{ inlineData: { mimeType: "image/jpeg", data: dataUrl.split(",")[1] } }, { text: PHOTO_PROMPT }] }];
+  let last;
+  for (const model of [...new Set([m.main, m.lite].filter(Boolean))]) {
+    for (const off of [true, false]) {
+      const gc = { temperature: 0.2, maxOutputTokens: 1500, responseMimeType: "application/json", responseSchema: PHOTO_SCHEMA }; if (off) gc.thinkingConfig = { thinkingBudget: 0 };
+      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 45000);
+      try {
+        const r = await fetch(`${AI_API()}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": aiKey(), "Content-Type": "application/json" }, body: JSON.stringify({ contents, generationConfig: gc }), signal: ctrl.signal });
+        if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 300)); e.status = r.status; throw e; }
+        const j = await r.json(); const txt = (((j.candidates || [])[0] || {}).content || {}).parts?.filter(p => !p.thought).map(p => p.text || "").join("") || "";
+        const o = JSON.parse(txt.replace(/^```(json)?|```$/g, "").trim());
+        return { items: (o.aliments || []).filter(a => a && a.nom).map(a => ({ name: String(a.nom).slice(0, 80), g: Math.max(1, +a.grammes || 100), kcal: +a.kcal || 0, p: +a.proteines || 0, c: +a.glucides || 0, f: +a.lipides || 0 })), note: o.commentaire || "" };
+      } catch (e) {
+        last = e.name === "AbortError" ? Object.assign(new Error("SLOW"), { slow: true }) : e;
+        if (off && e.status === 400) continue;
+        break;
+      } finally { clearTimeout(tm); }
+    }
+    if (last && !(last.status === 400 || last.status === 429 || last.slow || last.status === 404 || last.status >= 500)) break;
+  }
+  throw last || new Error("EMPTY");
+}
+function photoSheet(state) {
+  const P = nu.photo;
+  if (state === "loading") return sheet(`<h2 class="disp">Analyse du plat</h2>${P && P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}<p class="typing">Le coach identifie les aliments et estime les portions…</p><div class="btns"><button class="btn ghost" data-close>Annuler</button></div>`);
+  if (state === "error") return sheet(`<h2 class="disp">Analyse impossible</h2><p>${esc(P.err)}</p><div class="btns">${!aiKey() ? `<a class="btn pri" href="#/coach" data-close>Activer ma clé Gemini (Coach)</a>` : ""}<button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`);
+  const it = P.items;
+  const tot = it.reduce((a, x) => ({ kcal: a.kcal + x.kcal, p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }), { kcal: 0, p: 0, c: 0, f: 0 });
+  sheet(`<h2 class="disp">Ton assiette</h2>${P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}
+    ${it.length ? `<p>Estimation à vérifier : corrige les grammes si besoin, les valeurs suivent.</p>
+    <div class="card" style="padding:2px 14px;margin-bottom:12px">${it.map((x, i) => `<div class="pitem"><div><b>${esc(x.name)}</b><small data-pis="${i}">${Math.round(x.kcal)} kcal · P ${f1(x.p)} · G ${f1(x.c)} · L ${f1(x.f)}</small></div>
+      <input inputmode="decimal" value="${Math.round(x.g)}" data-pi="${i}" aria-label="Grammes de ${esc(x.name)}"><span class="mut">g</span><button class="chip" data-act="nu-pdel" data-i="${i}" aria-label="Retirer">✕</button></div>`).join("")}</div>
+    <div class="qres" id="nu-ptot"><b>${Math.round(tot.kcal)} kcal</b><span>P ${f1(tot.p)} g · G ${f1(tot.c)} g · L ${f1(tot.f)} g</span></div>
+    ${P.note ? `<p class="dim" style="font-size:12px">${esc(P.note)}</p>` : ""}
+    ${slotSelect(nu.slot || slotNow())}
+    <div class="btns"><button class="btn pri" data-act="nu-padd">Ajouter au journal</button><button class="btn ghost" data-close>Annuler</button></div>`
+    : `<p>Aucun aliment reconnu sur cette photo. Essaie une photo prise du dessus, bien éclairée, ou utilise la recherche.</p><div class="btns"><button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`}`);
+  $$(".sheet [data-pi]").forEach(inp => inp.addEventListener("input", () => {
+    const i = +inp.dataset.pi, x = P.items[i], g = num(inp.value); if (!(g > 0)) return; const k = g / x.g;
+    Object.assign(x, { g, kcal: x.kcal * k, p: x.p * k, c: x.c * k, f: x.f * k });
+    const s1 = $(`[data-pis="${i}"]`); if (s1) s1.textContent = `${Math.round(x.kcal)} kcal · P ${f1(x.p)} · G ${f1(x.c)} · L ${f1(x.f)}`;
+    const t = P.items.reduce((a, y) => ({ kcal: a.kcal + y.kcal, p: a.p + y.p, c: a.c + y.c, f: a.f + y.f }), { kcal: 0, p: 0, c: 0, f: 0 });
+    const tt = $("#nu-ptot"); if (tt) tt.innerHTML = `<b>${Math.round(t.kcal)} kcal</b><span>P ${f1(t.p)} g · G ${f1(t.c)} g · L ${f1(t.f)} g</span>`; }));
+}
+function editMealSheet(m) {
+  sheet(`<h2 class="disp" style="font-size:24px">${esc(m.name)}</h2><p>${Math.round(m.kcal)} kcal · P ${f1(m.p)} · G ${f1(m.c)} · L ${f1(m.f)}${m.src === "photo" ? " · estimation photo" : ""}</p>
+    ${m.per100 || m.g ? `<div class="field"><label for="nu-eg">Quantité (g)</label><input id="nu-eg" inputmode="decimal" value="${m.g || 100}"></div>` : `<div class="field"><label for="nu-ek">Calories</label><input id="nu-ek" inputmode="numeric" value="${Math.round(m.kcal)}"></div>`}
+    ${slotSelect(m.slot)}
+    <div class="btns"><button class="btn pri" data-act="nu-esave" data-id="${m.id}">Enregistrer</button><button class="btn ghost" data-act="nu-del" data-id="${m.id}">${I.trash}Supprimer</button><button class="btn ghost" data-close>Annuler</button></div>`);
+}
+function manualSheet() {
+  sheet(`<h2 class="disp">Saisie libre</h2><p>Pour un plat dont tu connais les valeurs (étiquette, restaurant, appli…).</p>
+    <div class="field"><label for="nu-mn">Nom</label><input id="nu-mn" placeholder="Ex. : Bowl poulet riz" autocomplete="off"></div>
+    <div class="wform" style="grid-template-columns:repeat(4,1fr)">${[["k", "kcal"], ["p", "Prot. g"], ["c", "Gluc. g"], ["f", "Lip. g"]].map(([k, l]) => `<div class="field"><label for="nu-m-${k}">${l}</label><input id="nu-m-${k}" inputmode="decimal"></div>`).join("")}</div>
+    ${slotSelect(nu.slot || slotNow())}
+    <div class="btns"><button class="btn pri" data-act="nu-madd">Ajouter au journal</button><button class="btn ghost" data-close>Annuler</button></div>`);
+}
+
 /* ───────────── Poids ───────────── */
 function vWeight(range) {
   const st = wgStats(); const goal = num(DB.settings.goalKg) || 77;
   const lastE = wgLive().slice(-1)[0];
   const today = DB.weights.find(x => !x.deleted && x.date === isoDay());
-  let html = `<header class="top"><div><div class="eyebrow">Objectif ${fmtKg(goal)} kg</div><h1 class="disp" style="margin-top:6px">Poids</h1></div>${syncBadge(true)}</header>
+  let html = `<header class="top"><div><div class="eyebrow">Objectif ${fmtKg(goal)} kg</div><h1 class="disp" style="margin-top:6px">Poids</h1></div>${syncBadge(true)}</header>${nutriSeg("poids")}
   <div class="card pad">
     <div class="eyebrow" style="margin-bottom:10px">${today ? "Pesée du jour (modifier)" : "Nouvelle pesée"}</div>
     <div class="wform">
@@ -1321,7 +1584,7 @@ function vSettings() {
     </div>`;
 }
 function doExport() {
-  const data = { app: "mon-programme-fitness", version: 6, exportedAt: new Date().toISOString(), workouts: DB.workouts, weights: DB.weights, settings: DB.settings, draft: DB.draft };
+  const data = { app: "mon-programme-fitness", version: 6, exportedAt: new Date().toISOString(), workouts: DB.workouts, weights: DB.weights, meals: DB.meals, settings: DB.settings, draft: DB.draft };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob); const a = document.createElement("a");
   a.href = url; a.download = `programme-fitness-${isoDay()}.json`; document.body.appendChild(a); a.click(); a.remove();
@@ -1379,6 +1642,7 @@ function doImport(file) {
       const d = JSON.parse(r.result);
       let res;
       if (Array.isArray(d.workouts)) { res = mergeWorkouts(d.workouts); const r2 = mergeWeights(d.weights); res.added += r2.added; res.updated += r2.updated; res.skipped += r2.skipped;
+        for (const m of (d.meals || [])) { if (!m || !m.id || !m.date) continue; const i = DB.meals.findIndex(x => x.id === m.id); if (i < 0) { DB.meals.push({ ...m, dirty: true, _v: 1, syncedAt: undefined }); res.added++; } else if ((m.updatedAt || "") > (DB.meals[i].updatedAt || "")) { DB.meals[i] = { ...m, dirty: true, _v: 1 }; res.updated++; } else res.skipped++; }
         if (d.settings && d.settings.goalKg && (!DB.settings.profileUpdatedAt || (d.settings.profileUpdatedAt || "") > DB.settings.profileUpdatedAt)) { DB.settings.goalKg = d.settings.goalKg; DB.settings.startKg = d.settings.startKg ?? DB.settings.startKg; DB.settings.profileUpdatedAt = d.settings.profileUpdatedAt || new Date().toISOString(); DB.settings.profileDirty = true; } }
       else if (Array.isArray(d.entries)) res = mergeWorkouts(fromV4(d));
       else throw new Error("format");
@@ -1496,7 +1760,11 @@ const TABLES = {
     pending: () => DB.workouts.filter(w => w.dirty && w.status === "done") },
   weights: { list: () => DB.weights, toR: x => ({ id: x.id, date: x.date, kg: num(x.kg), waist: num(x.waist) || null, deleted: !!x.deleted, client_updated_at: x.updatedAt || new Date().toISOString() }),
     fromR: r => ({ id: r.id, date: r.date, kg: Number(r.kg), waist: r.waist == null ? null : Number(r.waist), deleted: !!r.deleted, updatedAt: r.client_updated_at || r.updated_at, syncedAt: r.updated_at, dirty: false }), same: sameG,
-    pending: () => DB.weights.filter(x => x.dirty) }
+    pending: () => DB.weights.filter(x => x.dirty) },
+  meals: { list: () => DB.meals, toR: x => ({ id: x.id, date: x.date, deleted: !!x.deleted, data: stripSync(x) }),
+    fromR: r => ({ ...r.data, id: r.id, date: r.date, deleted: !!r.deleted, syncedAt: r.updated_at, dirty: false }),
+    same: (a, b) => JSON.stringify([a.date, a.slot, a.name, a.g, a.kcal, a.p, a.c, a.f, !!a.deleted]) === JSON.stringify([b.date, b.slot, b.name, b.g, b.kcal, b.p, b.c, b.f, !!b.deleted]),
+    pending: () => DB.meals.filter(x => x.dirty) }
 };
 function applyRemote(T, r, stats) {
   const list = T.list(); const inc = T.fromR(r); const i = list.findIndex(x => x.id === r.id);
@@ -1527,6 +1795,7 @@ async function syncOnce(R, stats) {
       if (prof.start_kg != null) DB.settings.startKg = Number(prof.start_kg);
       if (prof.extras && typeof prof.extras === "object") DB.settings.extras = prof.extras;
       if (prof.removed && typeof prof.removed === "object") DB.settings.removed = prof.removed;
+      if (prof.nutri && typeof prof.nutri === "object") DB.settings.nutri = prof.nutri;
       DB.settings.profileSyncedAt = prof.updated_at;
     }
     // 2) envoi (les résultats ne sont appliqués qu'une fois l'écriture confirmée)
@@ -1539,7 +1808,7 @@ async function syncOnce(R, stats) {
       }
     }
     let profRes = null;
-    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null, extras: DB.settings.extras || {}, removed: DB.settings.removed || {} }], "user_id");
+    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null, extras: DB.settings.extras || {}, removed: DB.settings.removed || {}, nutri: DB.settings.nutri || null }], "user_id");
     if (R.commit) await R.commit();
     for (const [T, res, vers] of done) for (const r of res) { const rec = T.list().find(x => x.id === r.id); if (!rec) continue; rec.syncedAt = r.updated_at; if (rec._v === vers.get(r.id)) rec.dirty = false; stats.up++; }
     if (profRes) { DB.settings.profileDirty = false; if (profRes[0]) DB.settings.profileSyncedAt = profRes[0].updated_at; }
@@ -1587,7 +1856,7 @@ function frErr(e) {
   return m.slice(0, 160);
 }
 function scheduleSync(ms = 1500) { if (!syncOn()) return; clearTimeout(syncT); syncT = setTimeout(() => syncNow(false), ms); }
-function pendingCount() { return DB.workouts.filter(w => w.dirty && w.status === "done").length + DB.weights.filter(x => x.dirty).length + (DB.settings.profileDirty ? 1 : 0); }
+function pendingCount() { return DB.workouts.filter(w => w.dirty && w.status === "done").length + DB.weights.filter(x => x.dirty).length + DB.meals.filter(x => x.dirty).length + (DB.settings.profileDirty ? 1 : 0); }
 function ago(iso) { const s = (Date.now() - new Date(iso)) / 1000; if (s < 60) return "à l'instant"; if (s < 3600) return `il y a ${Math.round(s / 60)} min`; if (s < 86400) return `il y a ${Math.round(s / 3600)} h`; return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); }
 function syncBadge(small) {
   const on = syncOn() && DB.sync.userId; const p = pendingCount();
@@ -1667,7 +1936,7 @@ $("#rest").addEventListener("click", ev => {
 /* ───────────── Feuilles & toasts ───────────── */
 function sheet(html) { closeSheet(); const bg = document.createElement("div"); bg.className = "sheet-bg"; bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true">${html}</div>`; document.body.appendChild(bg);
   bg.addEventListener("click", ev => { if (ev.target === bg || ev.target.closest("[data-close]")) closeSheet(); handleAct(ev); }); }
-function closeSheet() { $$(".sheet-bg").forEach(x => x.remove()); }
+function closeSheet() { $$(".sheet-bg").forEach(x => { try { if (x.isConnected) x.remove(); } catch (e) {} }); if (typeof scanCtl !== "undefined" && scanCtl) stopScan(); }
 addEventListener("hashchange", () => { pick.prog = null; });
 let toastT;
 function toast(msg, undo, label = "Annuler") {
@@ -1691,6 +1960,7 @@ function route() {
   if (a === "progres") return { name: "prog2", q: b, m: c };
   if (a === "poids") return { name: "poids", r: b };
   if (a === "coach") return { name: "coach" };
+  if (a === "nutrition") return { name: "nutri", d: b };
   if (a === "reglages") return { name: "set" };
   return { name: "404" };
 }
@@ -1698,9 +1968,9 @@ function vNotFound() { return `<div class="empty"><div class="disp">Introuvable<
 let clockT;
 function render(keepScroll) {
   const r = route(); if (keepScroll !== true) closeSheet(); const y = scrollY;
-  const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q, r.m), poids: () => vWeight(r.r), coach: vCoach, set: vSettings };
+  const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q, r.m), poids: () => vWeight(r.r), coach: vCoach, nutri: () => vNutri(r.d), set: vSettings };
   view.innerHTML = (map[r.name] || vNotFound)();
-  const navKey = r.name === "ex" ? "prog" : ["hd", "edit", "hist", "coach"].includes(r.name) ? "prog2" : r.name;
+  const navKey = r.name === "ex" ? "prog" : ["hd", "edit", "hist", "coach"].includes(r.name) ? "prog2" : r.name === "poids" ? "nutri" : r.name;
   alertCache = null;
   $("#nav").innerHTML = navHTML(navKey);
   if (r.name !== "edit" && DB.editBuf) { DB.editBuf = null; save(); }
@@ -1708,6 +1978,12 @@ function render(keepScroll) {
   if (r.name === "wk" && DB.draft) { const tick = () => { const c = $("#clock"); if (!c) return; const m = Math.floor((Date.now() - new Date(DB.draft.startedAt)) / 60000); c.textContent = m < 60 ? m + " min" : Math.floor(m / 60) + " h " + pad2(m % 60); }; tick(); clockT = setInterval(tick, 20000); }
   const gal = $("#gal"); if (gal) gal.addEventListener("scroll", () => { const i = Math.round(gal.scrollLeft / gal.clientWidth); $$("#dots i").forEach((d, k) => d.classList.toggle("on", k === i)); }, { passive: true });
   const sel = $("#exsel"); if (sel) sel.onchange = () => { location.hash = "#/progres/" + sel.value; };
+  const np = $("#nu-photo"); if (np) np.onchange = async () => { const f = np.files[0]; if (!f) return; nu.day = route().d || isoDay(); nu.slot = slotNow();
+    try { const img = await resizeImage(f); nu.photo = { img, items: [] }; photoSheet("loading");
+      const res = await analyzePhoto(img); if (!$(".sheet-bg")) return; nu.photo.items = res.items; nu.photo.note = res.note; photoSheet(); }
+    catch (e) { nu.photo = { ...(nu.photo || {}), err: aiErr(e) }; if ($(".sheet-bg") || true) photoSheet("error"); }
+    np.value = ""; };
+  const nm = $("#nu-man"); if (nm) nm.onchange = () => { $("#nu-manbox").style.display = nm.checked ? "" : "none"; };
   const aw = $("#ai-w"); if (aw) aw.onchange = () => { DB.settings.aiShareWeight = aw.checked; saveNow(); };
   const aq = $("#ai-q"); if (aq) aq.onkeydown = ev => { if (ev.key === "Enter" && !ev.shiftKey && matchMedia("(pointer:fine)").matches) { ev.preventDefault(); aiSend(aq.value); } };
   const wk = $("#wg-kg"); if (wk) wk.onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); saveWeight(); } };
@@ -1759,6 +2035,37 @@ function handleAct(ev) {
     }
     case "restore": { const x = DB.workouts.find(y => y.id === el.dataset.id); if (x) { x.deleted = false; markDirty(x); saveNow(); render(); toast("Séance restaurée ✓"); } break; }
     case "export": doExport(); break;
+    case "nu-search": nu.day = route().d || isoDay(); openSearch(el.dataset.slot); break;
+    case "nu-scan": nu.day = route().d || isoDay(); nu.slot = slotNow(); openScan(); break;
+    case "nu-scan-close": stopScan(); closeSheet(); break;
+    case "nu-ean": lookupOFF(($("#nu-ean") || {}).value || ""); break;
+    case "nu-manual": nu.day = route().d || isoDay(); manualSheet(); break;
+    case "nu-pick-ciq": { const f = CIQ && CIQ.foods.find(x => String(x[0]) === el.dataset.code); if (!f) break; qtySheet({ name: f[1], sub: f[2], per100: { kcal: f[3], p: f[4], c: f[5], f: f[6] }, src: "ciqual", ref: f[0] }); break; }
+    case "nu-pick-recent": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; qtySheet({ name: m.name, sub: "Récent", per100: m.per100, g: m.g || 100, src: m.src, ref: m.ref }); break; }
+    case "nu-add": { nu.day = route().d || nu.day || isoDay(); const it = nu.item; const g = num($("#nu-g").value); if (!(g > 0 && g < 5000)) { toast("Quantité invalide."); break; }
+      const p = it.per100; addMeal({ slot: $("#nu-slot").value, name: it.name, g, kcal: p.kcal * g / 100, p: p.p * g / 100, c: p.c * g / 100, f: p.f * g / 100, per100: p, src: it.src, ref: it.ref });
+      saveNow(); closeSheet(); render(true); toast(it.name.slice(0, 30) + " ajouté ✓"); break; }
+    case "nu-madd": { const name = $("#nu-mn").value.trim(), k = num($("#nu-m-k").value); if (!name || !(k >= 0 && k < 10000)) { toast("Indique au moins un nom et les calories."); break; }
+      addMeal({ slot: $("#nu-slot").value, name, kcal: k, p: num($("#nu-m-p").value) || 0, c: num($("#nu-m-c").value) || 0, f: num($("#nu-m-f").value) || 0, src: "manuel" }); saveNow(); closeSheet(); render(true); toast("Ajouté ✓"); break; }
+    case "nu-edit": { const m = DB.meals.find(x => x.id === el.dataset.id); if (m) editMealSheet(m); break; }
+    case "nu-esave": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break;
+      const eg = $("#nu-eg"); if (eg) { const g = num(eg.value); if (!(g > 0 && g < 5000)) { toast("Quantité invalide."); break; } const k = m.per100 ? null : g / (m.g || g);
+        if (m.per100) Object.assign(m, { g, kcal: r1(m.per100.kcal * g / 100), p: r1(m.per100.p * g / 100), c: r1(m.per100.c * g / 100), f: r1(m.per100.f * g / 100) }); else Object.assign(m, { g, kcal: r1(m.kcal * k), p: r1(m.p * k), c: r1(m.c * k), f: r1(m.f * k) }); }
+      else { const k = num($("#nu-ek").value); if (k >= 0) m.kcal = k; }
+      m.slot = $("#nu-slot").value; markDirty(m); saveNow(); closeSheet(); render(true); break; }
+    case "nu-del": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; m.deleted = true; markDirty(m); saveNow(); closeSheet(); render(true);
+      toast("Supprimé", () => { m.deleted = false; markDirty(m); saveNow(); render(true); }); break; }
+    case "nu-pdel": { nu.slot = $("#nu-slot").value; nu.photo.items.splice(+el.dataset.i, 1); photoSheet(); break; }
+    case "nu-padd": { const slot = $("#nu-slot").value; for (const x of nu.photo.items) addMeal({ slot, name: x.name, g: Math.round(x.g), kcal: x.kcal, p: x.p, c: x.c, f: x.f, per100: { kcal: x.kcal * 100 / x.g, p: x.p * 100 / x.g, c: x.c * 100 / x.g, f: x.f * 100 / x.g }, src: "photo" });
+      saveNow(); closeSheet(); render(true); toast("Repas ajouté ✓"); break; }
+    case "nu-goal": {
+      const N = DB.settings.nutri = { ...(DB.settings.nutri || {}) };
+      const h = num($("#nu-h").value), a = num($("#nu-a").value);
+      if ((h != null && !(h >= 120 && h <= 230)) || (a != null && !(a >= 14 && a <= 100))) { toast("Taille (cm) ou âge invalide."); break; }
+      N.height = h; N.age = a; N.sex = $("#nu-s").value; N.activity = +$("#nu-act").value; N.mode = $("#nu-man").checked ? "manuel" : "auto";
+      if (N.mode === "manuel") { for (const k of ["kcal", "p", "c", "f"]) N[k] = Math.round(num($("#nu-m" + k).value) || 0); if (!(N.kcal >= 1000 && N.kcal <= 6000)) { toast("Calories entre 1000 et 6000."); break; } }
+      N.updatedAt = new Date().toISOString(); DB.settings.profileUpdatedAt = N.updatedAt; DB.settings.profileDirty = true; saveNow(); scheduleSync(); render(true); toast("Objectifs enregistrés ✓"); break;
+    }
     case "ai-key": { const k = $("#ai-key").value.trim(); if (!/^[A-Za-z0-9._~-]{20,}$/.test(k)) { toast("Clé invalide : colle la clé complète copiée depuis Google AI Studio (sans espace)."); break; }
       try { localStorage.setItem("mpf.aikey", k); localStorage.removeItem("mpf.aimodel"); } catch (e) {}
       el.disabled = true;

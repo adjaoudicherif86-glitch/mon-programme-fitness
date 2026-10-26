@@ -400,3 +400,39 @@ div > .coach{margin:0}
 .typing{animation:blink 1.2s ease-in-out infinite}
 @keyframes blink{50%{opacity:.4}}
 @media (max-width:370px){.rkpi{grid-template-columns:repeat(3,1fr)}}
+
+/* ───── V7 : nutrition ───── */
+.daynav{display:flex;align-items:center;justify-content:space-between;margin:14px 0 12px}
+.daynav b{font-size:16px;text-transform:capitalize}
+.daynav .iconbtn svg{width:18px;height:18px}
+.kcal .kbig{font-size:54px;margin-top:6px;position:relative}
+.kcal .kbig small{font-size:18px;color:var(--mut)}
+.mrow{display:grid;grid-template-columns:76px 1fr auto;gap:10px;align-items:center;padding:4px 0;font-size:13px;position:relative}
+.mrow i{display:block;height:8px;border-radius:4px;background:#222;overflow:hidden}
+.mrow i b{display:block;height:100%;background:var(--txt);border-radius:4px}
+.mrow i b.over{background:repeating-linear-gradient(135deg,#fff 0 3px,#777 3px 6px)}
+.mrow em{font-style:normal;font-weight:800;white-space:nowrap}
+.addgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+.addbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:76px;border-radius:16px;border:1px solid var(--line2);background:var(--s1);font-size:11px;font-weight:800;text-align:center;cursor:pointer;color:var(--txt);padding:6px}
+.addbtn svg{width:24px;height:24px}
+.addbtn:first-child{background:var(--txt);color:var(--inv);border-color:var(--txt)}
+.meal{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 0;border-top:1px solid var(--line);color:inherit;background:none}
+.meal:first-child{border-top:0}
+.meal span{flex:1;min-width:0}
+.meal b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meal small{display:block;color:var(--mut);font-size:12px;margin-top:2px}
+.meal em{font-style:normal;font-weight:800;font-size:17px;white-space:nowrap}
+.meal em small{display:inline;font-size:11px}
+.empty-slot{width:100%;height:46px;border-radius:14px;border:1px dashed var(--line2);color:var(--mut);font-weight:700;font-size:14px}
+.qres{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:12px 14px;border-radius:12px;background:var(--s2);margin-bottom:12px}
+.qres b{font-size:22px;font-weight:800}.qres span{font-size:13px;color:var(--mut)}
+.scanbox{position:relative;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:4/3;border:1px solid var(--line2)}
+.scanbox video{width:100%;height:100%;object-fit:cover}
+.scanline{position:absolute;left:10%;right:10%;top:50%;height:2px;background:#fff;box-shadow:0 0 12px #fff;animation:scan 1.6s ease-in-out infinite alternate}
+@keyframes scan{from{top:25%}to{top:75%}}
+.photo-prev{width:100%;max-height:220px;object-fit:cover;border-radius:14px;margin-bottom:12px}
+.pitem{display:grid;grid-template-columns:1fr 64px auto auto;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.pitem:first-child{border-top:0}
+.pitem b{font-size:14px;display:block}.pitem small{font-size:12px;color:var(--mut)}
+.pitem input{width:100%;height:40px;border-radius:10px;border:1px solid var(--line2);background:var(--s2);text-align:center;font-weight:700;font-size:16px}
+@media (max-width:370px){.addgrid{grid-template-columns:1fr 1fr}}
