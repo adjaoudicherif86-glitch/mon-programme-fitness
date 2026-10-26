@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.0.0";
+const APP_VERSION = "7.0.1";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1706,7 +1706,7 @@ function ghRemote(c) {
         const st = new Date().toISOString() + "~" + Math.random().toString(36).slice(2, 8);
         const row = { ...r, updated_at: st };
         if (t === "profil") { doc.profil = row; out.push({ user_id: r.user_id, updated_at: st }); continue; }
-        const i = doc[t].findIndex(x => x.id === r.id); if (i >= 0) doc[t][i] = row; else doc[t].push(row);
+        doc[t] = doc[t] || []; const i = doc[t].findIndex(x => x.id === r.id); if (i >= 0) doc[t][i] = row; else doc[t].push(row);
         out.push({ id: r.id, updated_at: st });
       }
       changed = true; return out;
