@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "6.5.0";
+const APP_VERSION = "6.5.1";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1046,7 +1046,8 @@ async function aiAsk(question, opts = {}) {
   if (!aiKey()) throw new Error("NO_KEY");
   if (!navigator.onLine) throw new Error("OFFLINE");
   let m = await aiModels();
-  const hist = opts.noHistory ? [] : aiChat().filter(h => !h.err).slice(-6);
+  const hist = [];
+  if (!opts.noHistory) { const c = aiChat(); for (let i = 0; i < c.length - 1; i++) if (c[i].r === "u" && c[i + 1].r === "a" && !c[i + 1].err) { hist.push(c[i], c[i + 1]); i++; } hist.splice(0, Math.max(0, hist.length - 6)); }
   const contents = [{ role: "user", parts: [{ text: "Voici mes données d'entraînement à jour :\n" + aiContext() }] }, { role: "model", parts: [{ text: "Bien reçu, j'ai tes données." }] }];
   for (const h of hist) contents.push({ role: h.r === "u" ? "user" : "model", parts: [{ text: h.t }] });
   contents.push({ role: "user", parts: [{ text: question }] });
@@ -1057,12 +1058,12 @@ async function aiAsk(question, opts = {}) {
       try { return await aiStreamOnce(model, aiBody(contents, opts, off), opts.onText); }
       catch (e) {
         last = e;
-        if (off && e.status === 400 && /thinking/i.test(e.message)) continue; // modèle qui refuse le réglage « réflexion » : on réessaie sans
+        if (off && e.status === 400) continue; // modèle qui refuse le réglage « réflexion » : on réessaie sans
         if (e.status === 404) { m = await aiModels(true); }
         break; // 429 (quota), lenteur, 404… → modèle suivant
       }
     }
-    if (last && !(last.status === 429 || last.slow || last.status === 404 || last.status >= 500)) break;
+    if (last && !(last.status === 400 || last.status === 429 || last.slow || last.status === 404 || last.status >= 500)) break;
   }
   throw last || new Error("EMPTY");
 }
@@ -1076,7 +1077,8 @@ function aiErr(e) {
   if (/NO_MODEL/.test(m)) return "Aucun modèle Gemini disponible avec cette clé.";
   if (/EMPTY/.test(m)) return "Réponse vide (filtrée par Google). Reformule ta question.";
   if (/SLOW/.test(m)) return "Google met trop de temps à répondre. Réessaie dans un instant.";
-  return "Erreur du service IA : " + m.slice(0, 120);
+  let g = ""; try { g = JSON.parse(m.replace(/^AI \d+ /, "")).error.message; } catch (x) { g = m.replace(/^AI \d+ /, ""); }
+  return `Erreur du service IA (${(m.match(/^AI (\d+)/) || [0, "?"])[1]}) : ${g.slice(0, 220)}`;
 }
 function mdLite(t) {
   let h = esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|\n)#{1,4} *(.+)/g, "$1<b>$2</b>");
