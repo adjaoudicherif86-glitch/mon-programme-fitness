@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.0.1";
+const APP_VERSION = "7.1.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1291,7 +1291,7 @@ function vNutri(d) {
     const ms = mealsOf(day).filter(m => (m.slot || "dej") === k);
     const sk = ms.reduce((a, m) => a + (+m.kcal || 0), 0);
     html += `<div class="sec-title"><h2 class="disp" style="font-size:19px">${lb}</h2><span class="mut" style="font-size:13px">${ms.length ? Math.round(sk) + " kcal" : ""}</span></div>`;
-    html += ms.length ? `<div class="card" style="padding:2px 16px">${ms.map(m => `<button class="meal" data-act="nu-edit" data-id="${m.id}"><span><b>${esc(m.name)}</b><small>${m.g ? fmtKg(m.g) + " g · " : ""}P ${Math.round(m.p || 0)} · G ${Math.round(m.c || 0)} · L ${Math.round(m.f || 0)}${m.src === "photo" ? " · estimation photo" : ""}${m.conflict ? " · conflit" : ""}</small></span><em>${Math.round(m.kcal || 0)}<small> kcal</small></em></button>`).join("")}</div>`
+    html += ms.length ? `<div class="card" style="padding:2px 16px">${ms.map(m => `<button class="meal" data-act="nu-edit" data-id="${m.id}"><span><b>${esc(m.name)}</b><small>${m.g ? fmtKg(m.g) + " g · " : ""}P ${Math.round(m.p || 0)} · G ${Math.round(m.c || 0)} · L ${Math.round(m.f || 0)}${m.src === "photo" ? " · estimation photo" : m.ing ? ` · ${m.ing.length} ingrédient${m.ing.length > 1 ? "s" : ""}` : ""}${m.conflict ? " · conflit" : ""}</small></span><em>${Math.round(m.kcal || 0)}<small> kcal</small></em></button>`).join("")}</div>`
       : `<button class="empty-slot" data-act="nu-search" data-slot="${k}">+ Ajouter</button>`;
   }
   // 7 jours
@@ -1373,6 +1373,7 @@ function qtySheet(item) {
 }
 function addMeal(o) {
   const m = { id: uid(), date: o.date || nu.day || isoDay(), slot: o.slot || slotNow(), name: o.name, g: o.g || null, kcal: r1(o.kcal), p: r1(o.p), c: r1(o.c), f: r1(o.f), per100: o.per100 || null, src: o.src, ref: o.ref || null };
+  if (o.ing && o.ing.length) m.ing = o.ing.map(x => ({ name: x.name, g: r1(x.g), per100: x.per100, src: x.src || null, ref: x.ref || null }));
   markDirty(m); DB.meals.push(m); return m;
 }
 /* --- Code-barres : caméra (ZXing) + Open Food Facts --- */
@@ -1426,31 +1427,88 @@ function resizeImage(file, max = 1024) {
 }
 const PHOTO_PROMPT = `Analyse cette photo de repas. Identifie chaque aliment visible, estime sa quantité en grammes (portion réellement présente dans l'assiette) et ses valeurs nutritionnelles pour cette quantité, en t'appuyant sur des valeurs de référence (table Ciqual). Pense aux matières grasses de cuisson et aux sauces visibles. Si ce n'est pas de la nourriture, renvoie une liste vide. Noms en français, courts.`;
 const PHOTO_SCHEMA = { type: "OBJECT", properties: { aliments: { type: "ARRAY", items: { type: "OBJECT", properties: { nom: { type: "STRING" }, grammes: { type: "NUMBER" }, kcal: { type: "NUMBER" }, proteines: { type: "NUMBER" }, glucides: { type: "NUMBER" }, lipides: { type: "NUMBER" } }, required: ["nom", "grammes", "kcal", "proteines", "glucides", "lipides"] } }, commentaire: { type: "STRING" } }, required: ["aliments"] };
-async function analyzePhoto(dataUrl) {
+async function aiJson(contents, schema, maxTok = 1500) {
   if (!aiKey()) throw new Error("NO_KEY");
   if (!navigator.onLine) throw new Error("OFFLINE");
-  let m = await aiModels();
-  const contents = [{ role: "user", parts: [{ inlineData: { mimeType: "image/jpeg", data: dataUrl.split(",")[1] } }, { text: PHOTO_PROMPT }] }];
+  const m = await aiModels();
   let last;
   for (const model of [...new Set([m.main, m.lite].filter(Boolean))]) {
     for (const off of [true, false]) {
-      const gc = { temperature: 0.2, maxOutputTokens: 1500, responseMimeType: "application/json", responseSchema: PHOTO_SCHEMA }; if (off) gc.thinkingConfig = { thinkingBudget: 0 };
+      const gc = { temperature: 0.2, maxOutputTokens: maxTok, responseMimeType: "application/json", responseSchema: schema }; if (off) gc.thinkingConfig = { thinkingBudget: 0 };
       const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 45000);
       try {
         const r = await fetch(`${AI_API()}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": aiKey(), "Content-Type": "application/json" }, body: JSON.stringify({ contents, generationConfig: gc }), signal: ctrl.signal });
         if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 300)); e.status = r.status; throw e; }
-        const j = await r.json(); const txt = (((j.candidates || [])[0] || {}).content || {}).parts?.filter(p => !p.thought).map(p => p.text || "").join("") || "";
-        const o = JSON.parse(txt.replace(/^```(json)?|```$/g, "").trim());
-        return { items: (o.aliments || []).filter(a => a && a.nom).map(a => ({ name: String(a.nom).slice(0, 80), g: Math.max(1, +a.grammes || 100), kcal: +a.kcal || 0, p: +a.proteines || 0, c: +a.glucides || 0, f: +a.lipides || 0 })), note: o.commentaire || "" };
+        const j = await r.json(); const txt = ((((j.candidates || [])[0] || {}).content || {}).parts || []).filter(p => !p.thought).map(p => p.text || "").join("");
+        return JSON.parse(txt.replace(/^```(json)?|```$/g, "").trim());
       } catch (e) {
         last = e.name === "AbortError" ? Object.assign(new Error("SLOW"), { slow: true }) : e;
         if (off && e.status === 400) continue;
         break;
       } finally { clearTimeout(tm); }
     }
-    if (last && !(last.status === 400 || last.status === 429 || last.slow || last.status === 404 || last.status >= 500)) break;
+    if (last && !(last.status === 400 || last.status === 429 || last.slow || last.status === 404 || last.status >= 500 || last instanceof SyntaxError)) break;
   }
   throw last || new Error("EMPTY");
+}
+async function analyzePhoto(dataUrl) {
+  const o = await aiJson([{ role: "user", parts: [{ inlineData: { mimeType: "image/jpeg", data: dataUrl.split(",")[1] } }, { text: PHOTO_PROMPT }] }], PHOTO_SCHEMA);
+  return { items: (o.aliments || []).filter(a => a && a.nom).map(a => ({ name: String(a.nom).slice(0, 80), g: Math.max(1, +a.grammes || 100), kcal: +a.kcal || 0, p: +a.proteines || 0, c: +a.glucides || 0, f: +a.lipides || 0 })), note: o.commentaire || "" };
+}
+const ING_SCHEMA = { type: "OBJECT", properties: { nom: { type: "STRING" }, kcal: { type: "NUMBER" }, proteines: { type: "NUMBER" }, glucides: { type: "NUMBER" }, lipides: { type: "NUMBER" } }, required: ["nom", "kcal", "proteines", "glucides", "lipides"] };
+async function estimateIngredient(text) {
+  const o = await aiJson([{ role: "user", parts: [{ text: `Donne les valeurs nutritionnelles moyennes POUR 100 GRAMMES de cet aliment tel qu'on le mange : « ${text} ». Appuie-toi sur la table Ciqual quand c'est possible. Nom court en français.` }] }], ING_SCHEMA, 400);
+  return { name: String(o.nom || text).slice(0, 80), per100: { kcal: +o.kcal || 0, p: +o.proteines || 0, c: +o.glucides || 0, f: +o.lipides || 0 } };
+}
+
+/* ───── Composition d'un plat : ingrédients + grammes → calories et macros calculées ───── */
+const sumIng = ing => ing.reduce((a, x) => { const k = (+x.g || 0) / 100; return { g: a.g + (+x.g || 0), kcal: a.kcal + x.per100.kcal * k, p: a.p + x.per100.p * k, c: a.c + x.per100.c * k, f: a.f + x.per100.f * k }; }, { g: 0, kcal: 0, p: 0, c: 0, f: 0 });
+const ingLine = x => { const k = (+x.g || 0) / 100; return `${Math.round(x.per100.kcal * k)} kcal · P ${f1(x.per100.p * k)} · G ${f1(x.per100.c * k)} · L ${f1(x.per100.f * k)}`; };
+function openComp(o) { nu.comp = { name: o.name || "", ing: (o.ing || []).map(x => ({ ...x, per100: { ...x.per100 } })), back: o.back, idx: o.idx, mealId: o.mealId, q: "", est: o.est || null }; compSheet(); }
+function compList() {
+  const c = nu.comp; const words = normQ(c.q).split(/\s+/).filter(Boolean);
+  if (!words.length) return "";
+  if (!CIQ) return `<p class="mut" style="font-size:13px">Chargement de la table des aliments…</p>`;
+  const full = normQ(c.q).trim();
+  const list = CIQ.foods.filter(f => words.every(w => f.q.includes(w))).sort((a, b) => (a.q.startsWith(full) ? 0 : 1) - (b.q.startsWith(full) ? 0 : 1) || a[1].length - b[1].length).slice(0, 8);
+  return list.map(f => `<button class="li pk" data-act="cp-pick" data-code="${f[0]}"><span class="t"><b>${esc(f[1])}</b><small>${Math.round(f[3])} kcal · P ${f1(f[4])} · G ${f1(f[5])} · L ${f1(f[6])} / 100 g</small></span></button>`).join("")
+    + (aiKey() ? `<button class="li pk" data-act="cp-ai"><span class="t"><b>✦ Estimer « ${esc(c.q.trim())} » avec l'IA</b><small>Si l'aliment n'est pas dans la liste</small></span></button>` : (list.length ? "" : `<p class="mut" style="font-size:13px">Aucun aliment trouvé : essaie un autre mot.</p>`));
+}
+function compSheet() {
+  const c = nu.comp; const t = sumIng(c.ing);
+  sheet(`<h2 class="disp">Composition</h2>
+    <div class="field"><label for="cp-name">Nom du plat</label><input id="cp-name" value="${esc(c.name)}" placeholder="Ex. : Salade de pâtes" autocomplete="off"></div>
+    ${c.est && !c.ing.length ? `<p class="dim" style="font-size:12px;margin:0 0 10px">Estimation actuelle : ${Math.round(c.est.kcal)} kcal pour ${Math.round(c.est.g)} g. Ajoute les ingrédients : les valeurs seront recalculées à partir des grammes.</p>` : ""}
+    ${c.ing.length ? `<div class="card" style="padding:2px 14px;margin-bottom:12px">${c.ing.map((x, i) => `<div class="pitem"><div><b>${esc(x.name)}</b><small data-cis="${i}">${ingLine(x)}${x.src === "ia" ? " · estimation IA" : ""}</small></div>
+      <input inputmode="decimal" value="${Math.round(x.g)}" data-ci="${i}" aria-label="Grammes de ${esc(x.name)}"><span class="mut">g</span><button class="chip" data-act="cp-del" data-i="${i}" aria-label="Retirer">✕</button></div>`).join("")}</div>
+    <div class="qres" id="cp-tot"><b>${Math.round(t.kcal)} kcal</b><span>${Math.round(t.g)} g · P ${f1(t.p)} · G ${f1(t.c)} · L ${f1(t.f)}</span></div>` : `<p class="mut" style="font-size:14px">Aucun ingrédient pour l'instant. Exemple pour une salade de pâtes : pâtes cuites 150 g, thon au naturel 60 g, maïs 30 g, mayonnaise 15 g…</p>`}
+    <div class="field" style="margin-top:6px"><label for="cp-q">Ajouter un ingrédient</label><input id="cp-q" type="search" placeholder="pâtes cuites, thon, maïs, tomate…" autocomplete="off" value="${esc(c.q)}"></div>
+    <div id="cp-list">${compList()}</div>
+    <div class="btns"><button class="btn pri" data-act="cp-ok" ${c.ing.length || c.back !== "new" ? "" : "disabled style='opacity:.4'"}>Valider</button><button class="btn ghost" data-act="cp-back">Retour</button></div>`);
+  $("#cp-name").addEventListener("input", e => { c.name = e.target.value; });
+  const q = $("#cp-q"); let tm;
+  q.addEventListener("input", () => { clearTimeout(tm); tm = setTimeout(() => { c.q = q.value; $("#cp-list").innerHTML = compList(); }, 120); });
+  if (!CIQ) loadCiq().then(() => { const l = $("#cp-list"); if (l) l.innerHTML = compList(); }).catch(() => {});
+  $$(".sheet [data-ci]").forEach(inp => inp.addEventListener("input", () => {
+    const i = +inp.dataset.ci, g = num(inp.value); if (!(g >= 0)) return; c.ing[i].g = g;
+    const s1 = $(`[data-cis="${i}"]`); if (s1) s1.textContent = ingLine(c.ing[i]);
+    const s = sumIng(c.ing); const tt = $("#cp-tot"); if (tt) tt.innerHTML = `<b>${Math.round(s.kcal)} kcal</b><span>${Math.round(s.g)} g · P ${f1(s.p)} · G ${f1(s.c)} · L ${f1(s.f)}</span>`; }));
+}
+function compDone() {
+  const c = nu.comp; const name = (c.name || "").trim() || "Plat";
+  const s = sumIng(c.ing); const has = c.ing.length && s.g > 0;
+  if (c.back === "photo" || c.back === "new") {
+    const P = nu.photo;
+    if (c.back === "new") { if (has) P.items.push({ name, g: s.g, kcal: s.kcal, p: s.p, c: s.c, f: s.f, ing: c.ing }); }
+    else { const x = P.items[c.idx]; x.name = name; if (has) Object.assign(x, { g: s.g, kcal: s.kcal, p: s.p, c: s.c, f: s.f, ing: c.ing }); }
+    nu.comp = null; photoSheet(); return;
+  }
+  if (c.back === "meal") {
+    const m = DB.meals.find(x => x.id === c.mealId); if (!m) { closeSheet(); return; }
+    m.name = name;
+    if (has) Object.assign(m, { g: r1(s.g), kcal: r1(s.kcal), p: r1(s.p), c: r1(s.c), f: r1(s.f), ing: c.ing, per100: { kcal: s.kcal * 100 / s.g, p: s.p * 100 / s.g, c: s.c * 100 / s.g, f: s.f * 100 / s.g } });
+    markDirty(m); saveNow(); nu.comp = null; closeSheet(); render(true); toast("Repas mis à jour ✓");
+  }
 }
 function photoSheet(state) {
   const P = nu.photo;
@@ -1460,16 +1518,18 @@ function photoSheet(state) {
   const tot = it.reduce((a, x) => ({ kcal: a.kcal + x.kcal, p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }), { kcal: 0, p: 0, c: 0, f: 0 });
   sheet(`<h2 class="disp">Ton assiette</h2>${P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}
     ${it.length ? `<p>Estimation à vérifier : corrige les grammes si besoin, les valeurs suivent.</p>
-    <div class="card" style="padding:2px 14px;margin-bottom:12px">${it.map((x, i) => `<div class="pitem"><div><b>${esc(x.name)}</b><small data-pis="${i}">${Math.round(x.kcal)} kcal · P ${f1(x.p)} · G ${f1(x.c)} · L ${f1(x.f)}</small></div>
-      <input inputmode="decimal" value="${Math.round(x.g)}" data-pi="${i}" aria-label="Grammes de ${esc(x.name)}"><span class="mut">g</span><button class="chip" data-act="nu-pdel" data-i="${i}" aria-label="Retirer">✕</button></div>`).join("")}</div>
+    <div class="card" style="padding:2px 14px;margin-bottom:12px">${it.map((x, i) => `<div class="pitem"><div><b>${esc(x.name)}</b><small data-pis="${i}">${Math.round(x.kcal)} kcal · P ${f1(x.p)} · G ${f1(x.c)} · L ${f1(x.f)}</small>
+        <button class="linkbtn" data-act="nu-pcomp" data-i="${i}">${x.ing ? `✎ ${x.ing.length} ingrédient${x.ing.length > 1 ? "s" : ""} · modifier` : "✎ Modifier / détailler les ingrédients"}</button></div>
+      <input inputmode="decimal" value="${Math.round(x.g)}" data-pi="${i}" aria-label="Grammes de ${esc(x.name)}"><span class="mut">g</span><button class="chip" data-act="nu-pdel" data-i="${i}" aria-label="Retirer">✕</button></div>`).join("")}
+      <button class="linkbtn" style="padding:12px 0" data-act="nu-pnew">+ Ajouter un aliment oublié</button></div>
     <div class="qres" id="nu-ptot"><b>${Math.round(tot.kcal)} kcal</b><span>P ${f1(tot.p)} g · G ${f1(tot.c)} g · L ${f1(tot.f)} g</span></div>
     ${P.note ? `<p class="dim" style="font-size:12px">${esc(P.note)}</p>` : ""}
     ${slotSelect(nu.slot || slotNow())}
     <div class="btns"><button class="btn pri" data-act="nu-padd">Ajouter au journal</button><button class="btn ghost" data-close>Annuler</button></div>`
-    : `<p>Aucun aliment reconnu sur cette photo. Essaie une photo prise du dessus, bien éclairée, ou utilise la recherche.</p><div class="btns"><button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`}`);
+    : `<p>Aucun aliment reconnu sur cette photo. Essaie une photo prise du dessus, bien éclairée, ou indique toi-même ce qu'il y a dans l'assiette.</p><div class="btns"><button class="btn pri" data-act="nu-pnew">Composer mon plat</button><button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`}`);
   $$(".sheet [data-pi]").forEach(inp => inp.addEventListener("input", () => {
     const i = +inp.dataset.pi, x = P.items[i], g = num(inp.value); if (!(g > 0)) return; const k = g / x.g;
-    Object.assign(x, { g, kcal: x.kcal * k, p: x.p * k, c: x.c * k, f: x.f * k });
+    Object.assign(x, { g, kcal: x.kcal * k, p: x.p * k, c: x.c * k, f: x.f * k }); if (x.ing) x.ing.forEach(y => { y.g = y.g * k; });
     const s1 = $(`[data-pis="${i}"]`); if (s1) s1.textContent = `${Math.round(x.kcal)} kcal · P ${f1(x.p)} · G ${f1(x.c)} · L ${f1(x.f)}`;
     const t = P.items.reduce((a, y) => ({ kcal: a.kcal + y.kcal, p: a.p + y.p, c: a.c + y.c, f: a.f + y.f }), { kcal: 0, p: 0, c: 0, f: 0 });
     const tt = $("#nu-ptot"); if (tt) tt.innerHTML = `<b>${Math.round(t.kcal)} kcal</b><span>P ${f1(t.p)} g · G ${f1(t.c)} g · L ${f1(t.f)} g</span>`; }));
@@ -1477,6 +1537,8 @@ function photoSheet(state) {
 function editMealSheet(m) {
   sheet(`<h2 class="disp" style="font-size:24px">${esc(m.name)}</h2><p>${Math.round(m.kcal)} kcal · P ${f1(m.p)} · G ${f1(m.c)} · L ${f1(m.f)}${m.src === "photo" ? " · estimation photo" : ""}</p>
     ${m.per100 || m.g ? `<div class="field"><label for="nu-eg">Quantité (g)</label><input id="nu-eg" inputmode="decimal" value="${m.g || 100}"></div>` : `<div class="field"><label for="nu-ek">Calories</label><input id="nu-ek" inputmode="numeric" value="${Math.round(m.kcal)}"></div>`}
+    <button class="btn sec block" style="margin-bottom:12px" data-act="nu-mcomp" data-id="${m.id}">${m.ing ? `✎ Ingrédients (${m.ing.length})` : "✎ Modifier / détailler les ingrédients"}</button>
+    ${m.ing ? `<p class="dim" style="font-size:12px;margin:-4px 0 12px">${m.ing.map(x => `${esc(x.name)} ${Math.round(x.g)} g`).join(" · ")}</p>` : ""}
     ${slotSelect(m.slot)}
     <div class="btns"><button class="btn pri" data-act="nu-esave" data-id="${m.id}">Enregistrer</button><button class="btn ghost" data-act="nu-del" data-id="${m.id}">${I.trash}Supprimer</button><button class="btn ghost" data-close>Annuler</button></div>`);
 }
@@ -2050,13 +2112,26 @@ function handleAct(ev) {
     case "nu-edit": { const m = DB.meals.find(x => x.id === el.dataset.id); if (m) editMealSheet(m); break; }
     case "nu-esave": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break;
       const eg = $("#nu-eg"); if (eg) { const g = num(eg.value); if (!(g > 0 && g < 5000)) { toast("Quantité invalide."); break; } const k = m.per100 ? null : g / (m.g || g);
+        if (m.ing && m.g) { const k2 = g / m.g; m.ing.forEach(y => { y.g = r1(y.g * k2); }); }
         if (m.per100) Object.assign(m, { g, kcal: r1(m.per100.kcal * g / 100), p: r1(m.per100.p * g / 100), c: r1(m.per100.c * g / 100), f: r1(m.per100.f * g / 100) }); else Object.assign(m, { g, kcal: r1(m.kcal * k), p: r1(m.p * k), c: r1(m.c * k), f: r1(m.f * k) }); }
       else { const k = num($("#nu-ek").value); if (k >= 0) m.kcal = k; }
       m.slot = $("#nu-slot").value; markDirty(m); saveNow(); closeSheet(); render(true); break; }
     case "nu-del": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; m.deleted = true; markDirty(m); saveNow(); closeSheet(); render(true);
       toast("Supprimé", () => { m.deleted = false; markDirty(m); saveNow(); render(true); }); break; }
+    case "nu-pcomp": { nu.slot = $("#nu-slot") ? $("#nu-slot").value : nu.slot; const i = +el.dataset.i, x = nu.photo.items[i]; openComp({ name: x.name, ing: x.ing, back: "photo", idx: i, est: x }); break; }
+    case "nu-pnew": { if ($("#nu-slot")) nu.slot = $("#nu-slot").value; nu.photo = nu.photo || { items: [] }; openComp({ name: "", ing: [], back: "new" }); break; }
+    case "nu-mcomp": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; openComp({ name: m.name, ing: m.ing, back: "meal", mealId: m.id, est: m }); break; }
+    case "cp-pick": { const f = CIQ && CIQ.foods.find(x => String(x[0]) === el.dataset.code); if (!f) break; const c = nu.comp; c.name = $("#cp-name").value;
+      c.ing.push({ name: f[1], g: 100, per100: { kcal: f[3], p: f[4], c: f[5], f: f[6] }, src: "ciqual", ref: f[0] }); c.q = ""; compSheet();
+      setTimeout(() => { const ins = $$(".sheet [data-ci]"); const last = ins[ins.length - 1]; if (last) { last.focus(); last.select(); } }, 50); break; }
+    case "cp-ai": { const c = nu.comp; const q = c.q.trim(); if (!q) break; c.name = $("#cp-name").value; el.disabled = true; el.querySelector("b").textContent = "Estimation en cours…";
+      (async () => { try { const r = await estimateIngredient(q); c.ing.push({ name: r.name, g: 100, per100: r.per100, src: "ia" }); c.q = ""; compSheet(); }
+        catch (e) { toast(aiErr(e)); el.disabled = false; el.querySelector("b").textContent = `✦ Estimer « ${q} » avec l'IA`; } })(); break; }
+    case "cp-del": { const c = nu.comp; c.name = $("#cp-name").value; c.ing.splice(+el.dataset.i, 1); compSheet(); break; }
+    case "cp-ok": compDone(); break;
+    case "cp-back": { const c = nu.comp; nu.comp = null; if (c && c.back === "meal") { const m = DB.meals.find(x => x.id === c.mealId); if (m) editMealSheet(m); else closeSheet(); } else photoSheet(); break; }
     case "nu-pdel": { nu.slot = $("#nu-slot").value; nu.photo.items.splice(+el.dataset.i, 1); photoSheet(); break; }
-    case "nu-padd": { const slot = $("#nu-slot").value; for (const x of nu.photo.items) addMeal({ slot, name: x.name, g: Math.round(x.g), kcal: x.kcal, p: x.p, c: x.c, f: x.f, per100: { kcal: x.kcal * 100 / x.g, p: x.p * 100 / x.g, c: x.c * 100 / x.g, f: x.f * 100 / x.g }, src: "photo" });
+    case "nu-padd": { const slot = $("#nu-slot").value; for (const x of nu.photo.items) addMeal({ slot, name: x.name, g: Math.round(x.g), kcal: x.kcal, p: x.p, c: x.c, f: x.f, per100: { kcal: x.kcal * 100 / x.g, p: x.p * 100 / x.g, c: x.c * 100 / x.g, f: x.f * 100 / x.g }, src: x.ing ? "compo" : "photo", ing: x.ing || null });
       saveNow(); closeSheet(); render(true); toast("Repas ajouté ✓"); break; }
     case "nu-goal": {
       const N = DB.settings.nutri = { ...(DB.settings.nutri || {}) };
