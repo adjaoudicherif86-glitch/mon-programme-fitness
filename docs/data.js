@@ -27,9 +27,9 @@ window.MUSCLES = {
 };
 
 window.SESSIONS = {
-  A: { nom: "Séance A", jour: "Lundi",    dow: 1, focus: "Jambes · Poussée · Tirage" },
-  B: { nom: "Séance B", jour: "Mercredi", dow: 3, focus: "Ischios · Poussée inclinée · Rowing" },
-  C: { nom: "Séance C", jour: "Vendredi", dow: 5, focus: "Isolation · Dos · Bras" }
+  A: { nom: "Séance A", focus: "Jambes · Poussée · Tirage" },
+  B: { nom: "Séance B", focus: "Ischios · Poussée inclinée · Rowing" },
+  C: { nom: "Séance C", focus: "Isolation · Dos · Bras" }
 };
 
 window.EXERCISES = [

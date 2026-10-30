@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.1.0";
+const APP_VERSION = "7.2.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -247,12 +247,13 @@ function navHTML(cur) {
 /* Programme personnalisé : exercices retirés d'une séance (l'historique est conservé) */
 const removedOf = s => ((DB.settings.removed || {})[s] || []);
 const progEx = s => EX.filter(e => e.s === s && !removedOf(s).includes(e.id));
-function todaySession() { const d = new Date().getDay(); return d === 1 ? "A" : d === 3 ? "B" : d === 5 ? "C" : nextSession(); }
-function nextSession() {
-  const d = new Date().getDay(); const order = [["A", 1], ["B", 3], ["C", 5]];
-  for (const [k, dw] of order) if (dw > d) return k; return "A";
-}
-function isTrainingDay() { return [1, 3, 5].includes(new Date().getDay()); }
+/* Jours libres : la séance proposée est simplement la suivante dans l'ordre A → B → C. */
+const ORDER = ["A", "B", "C"];
+function lastDone() { return sorted()[0] || null; }
+function todaySession() { const l = lastDone(); return l ? ORDER[(ORDER.indexOf(l.session) + 1) % ORDER.length] : "A"; }
+const nextSession = todaySession;
+function lastOf(s) { return sorted().find(w => w.session === s) || null; }
+function weekLeft() { const dow = (new Date().getDay() + 6) % 7; const n = live().filter(w => parseDay(w.date) >= mondayOf(new Date())).length; return { n, need: Math.max(0, 3 - n), daysLeft: 7 - dow }; }
 
 /* ───────────── Écrans ───────────── */
 function vHome() {
@@ -284,12 +285,13 @@ function vHome() {
   ${draft}
   <section class="hero">
     <div class="big disp" aria-hidden="true">${s}</div>
-    <div class="eyebrow">${isTrainingDay() ? "Séance du jour" : "Prochaine séance · " + S.jour}</div>
+    <div class="eyebrow">Prochaine séance${lastDone() ? ` · après la ${esc(SES[lastDone().session].nom)} du ${esc(fmtDay(lastDone().date, { weekday: "long", day: "numeric", month: "short" }))}` : ""}</div>
     <h2 class="disp">${esc(S.nom)}</h2>
     <div class="focus">${esc(S.focus)} · ~55 min + cardio</div>
     <ol>${exs.map(e => `<li>${esc(e.nom)}<span>${e.series} × ${repTxt(e)}</span></li>`).join("")}${((DB.settings.extras || {})[s] || []).map(d => { const e = exOf(d.id) || d; return `<li>${esc(e.nom)}<span>${d.series || 3} × ${e.reps ? repTxt(e) : "–"}</span></li>`; }).join("")}</ol>
     <div class="row2"><a class="btn sec" href="#/programme/${s}">Voir</a>
       <button class="btn pri" data-act="start" data-s="${s}">${I.play}Commencer</button></div>
+    <div class="other"><span class="mut">Envie d'une autre ?</span>${ORDER.filter(k => k !== s).map(k => `<button class="chip" data-act="start" data-s="${k}">Séance ${k}</button>`).join("")}</div>
   </section>
   ${(() => { const a = coachAlerts().filter(x => x.lvl === "warn"); return a.length ? `<a class="card pad homealert" href="#/coach"><div class="eyebrow">Coach · ${a.length} alerte${a.length > 1 ? "s" : ""}</div>${a.slice(0, 2).map(x => `<p><b>${esc(x.t)}</b> — ${esc(x.m.length > 110 ? x.m.slice(0, 108) + "…" : x.m)}</p>`).join("")}</a>` : ""; })()}
   ${weightCardHome()}
@@ -319,7 +321,7 @@ function vProgramme(s) {
   const exs = progEx(s);
   return `
   <header class="top"><div><div class="eyebrow">Programme full body · 3 × / semaine</div><h1 class="disp" style="margin-top:6px">Programme</h1></div></header>
-  <div class="seg" role="tablist">${Object.entries(SES).map(([k, v]) => `<button role="tab" aria-selected="${k === s}" class="${k === s ? "on" : ""}" data-go="#/programme/${k}">Séance ${k}<small>${v.jour}</small></button>`).join("")}</div>
+  <div class="seg" role="tablist">${Object.entries(SES).map(([k, v]) => `<button role="tab" aria-selected="${k === s}" class="${k === s ? "on" : ""}" data-go="#/programme/${k}">Séance ${k}<small>${k === todaySession() ? "prochaine" : lastOf(k) ? esc(fmtShort(lastOf(k).date)) : "–"}</small></button>`).join("")}</div>
   <p class="mut" style="margin:16px 2px 4px;font-size:14px">${esc(SES[s].focus)}</p>
   ${exs.map((e, i) => {
     const pv = prevFor(e.id);
@@ -542,10 +544,13 @@ function newWorkout(s) {
   return { id: uid(), session: s, date: isoDay(), startedAt: now, updatedAt: now, status: "draft", rev: 0, entries, defs, cardio: { min: "", incl: "", vit: "", done: false }, note: "" };
 }
 function startSession(s) {
-  if (DB.draft && DB.draft.session !== s) {
-    return sheet(`<h2 class="disp">Séance en cours</h2><p>Une ${esc(SES[DB.draft.session].nom)} est déjà commencée (${wSets(DB.draft)} séries validées). Que veux-tu faire ?</p>
-      <div class="btns"><a class="btn pri" href="#/seance" data-close>Reprendre la ${esc(SES[DB.draft.session].nom)}</a>
-      <button class="btn ghost" data-act="discard-start" data-s="${s}">Abandonner et démarrer la séance ${s}</button>
+  const d = DB.draft;
+  if (d && (d.session !== s || d.date !== isoDay())) {
+    if (!wSets(d)) { DB.draft = null; saveNow(); } // séance ouverte sans aucune série validée : on la remplace
+    else return sheet(`<h2 class="disp">Séance en cours</h2><p>La ${esc(SES[d.session].nom)} du ${esc(fmtDay(d.date, { weekday: "long", day: "numeric", month: "long" }))} est encore ouverte (${wSets(d)} série${wSets(d) > 1 ? "s" : ""} validée${wSets(d) > 1 ? "s" : ""}). Que veux-tu faire ?</p>
+      <div class="btns"><button class="btn pri" data-act="save-draft-start" data-s="${s}">L'enregistrer et démarrer la séance ${s}</button>
+      <a class="btn sec" href="#/seance" data-close>Reprendre la ${esc(SES[d.session].nom)}</a>
+      <button class="btn ghost" data-act="discard-start" data-s="${s}">L'abandonner et démarrer la séance ${s}</button>
       <button class="btn ghost" data-close>Annuler</button></div>`);
   }
   if (!DB.draft) { DB.draft = newWorkout(s); saveNow(); }
@@ -608,7 +613,7 @@ function vWorkout() {
     const t = todaySession();
     return `<header class="top"><div><div class="eyebrow">Démarrer</div><h1 class="disp" style="margin-top:6px">Quelle séance ?</h1></div></header>
       ${Object.entries(SES).map(([k, v]) => `<button class="card hcard" style="width:100%;text-align:left;${k === t ? "border-color:#fff" : ""}" data-act="start" data-s="${k}">
-        <span class="L disp">${k}</span><span><b>${esc(v.nom)} · ${v.jour}</b><small>${esc(v.focus)}</small></span><span class="v">${k === t ? '<span class="badge" style="color:#fff;border-color:#fff">Aujourd’hui</span>' : ""}</span></button>`).join("")}
+        <span class="L disp">${k}</span><span><b>${esc(v.nom)}</b><small>${esc(v.focus)}${lastOf(k) ? ` · dernière : ${esc(fmtShort(lastOf(k).date))}` : ""}</small></span><span class="v">${k === t ? '<span class="badge" style="color:#fff;border-color:#fff">Prochaine</span>' : ""}</span></button>`).join("")}
       <p class="mut" style="font-size:13px;margin-top:16px">Tes séries sont enregistrées automatiquement à chaque saisie. Tu peux fermer l'application et reprendre plus tard.</p>`;
   }
   return editorHTML(w, "draft");
@@ -928,7 +933,8 @@ function coachAlerts() {
   const last = ws[0]; const days = Math.round((today - parseDay(last.date)) / 864e5);
   if (days >= 6) out.push({ lvl: "warn", t: "Régularité", m: `Dernière séance il y a ${days} jours (${fmtDay(last.date, { weekday: "long", day: "numeric", month: "long" })}). Reprends avec la séance ${todaySession()}, même plus légère.` });
   const wk = weeklyData(5); const cur = wk[4]; const dow = (new Date().getDay() + 6) % 7; // 0 = lundi
-  if (dow >= 4 && cur.n < 2 && days < 6) out.push({ lvl: "info", t: "Semaine en cours", m: `${cur.n} séance${cur.n > 1 ? "s" : ""} cette semaine. Il reste ${7 - dow} jour${7 - dow > 1 ? "s" : ""} pour viser 3 séances.` });
+  const wl = weekLeft();
+  if (wl.need > 0 && wl.daysLeft < wl.need && days < 6) out.push({ lvl: "info", t: "Semaine en cours", m: `${cur.n} séance${cur.n > 1 ? "s" : ""} cette semaine. Il reste ${7 - dow} jour${7 - dow > 1 ? "s" : ""} pour viser 3 séances.` });
   // 2. stagnation / prêt à monter / baisse de forme
   const used = usedExercises(); const stall = [], up = [], drop = [];
   for (const e of used) {
@@ -990,7 +996,7 @@ async function aiModels(force) {
 function aiContext() {
   const L = [];
   L.push(`Date du jour : ${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.`);
-  L.push(`Programme : full body 3 fois par semaine (A lundi, B mercredi, C vendredi), séries de 3, + 15–20 min de marche inclinée. Objectif : perdre du gras en gardant/gagnant du muscle.`);
+  L.push(`Programme : full body 3 fois par semaine, jours libres choisis par Chérif, en enchaînant les séances dans l'ordre A → B → C (prochaine : séance ${todaySession()}), séries de 3, + 15–20 min de marche inclinée. Objectif : perdre du gras en gardant/gagnant du muscle.`);
   for (const s of ["A", "B", "C"]) { const ex = progEx(s).map(e => `${e.nom} ${e.series}×${repTxt(e)}`).concat(((DB.settings.extras || {})[s] || []).map(d => (exOf(d.id) || d).nom + " (ajouté)")); L.push(`Séance ${s} : ${ex.join(" ; ")}.`); }
   const ws = sorted();
   L.push(`Séances terminées : ${ws.length}. Assiduité 4 dernières semaines : ${ws.filter(w => (startDay(new Date()) - parseDay(w.date)) / 864e5 < 28).length}/12. Semaines complètes d'affilée : ${streakWeeks()}.`);
@@ -1109,8 +1115,8 @@ function weekReport() {
   for (const p of prEvents()) { const d = parseDay(p.date); if (d >= W.start && d < end) prs.push(p); }
   // régularité
   if (W.n >= 3) good.push(`<b>${W.n} séances</b> : semaine complète${streakWeeks() > 1 ? `, ${streakWeeks()} semaines d'affilée` : ""}.`);
-  else if (k === 4 || dow >= 4) bad.push(`<b>${W.n} séance${W.n > 1 ? "s" : ""} sur 3</b>${k === 5 ? ` : il reste ${7 - dow} jour${7 - dow > 1 ? "s" : ""}` : ""}.`);
-  else if (W.n) good.push(`<b>${W.n} séance${W.n > 1 ? "s" : ""}</b> déjà faite${W.n > 1 ? "s" : ""}, objectif 3.`);
+  else if (k === 4 || (7 - dow) < (3 - W.n)) bad.push(`<b>${W.n} séance${W.n > 1 ? "s" : ""} sur 3</b>${k === 5 ? ` : il ne reste que ${7 - dow} jour${7 - dow > 1 ? "s" : ""}` : ""}.`);
+  else if (W.n) good.push(`<b>${W.n} séance${W.n > 1 ? "s" : ""}</b> déjà faite${W.n > 1 ? "s" : ""} : encore ${3 - W.n} à placer d'ici dimanche (${7 - dow} jour${7 - dow > 1 ? "s" : ""} restant${7 - dow > 1 ? "s" : ""}).`);
   // volume
   if (P.vol > 0 && W.vol > 0) { const d = (W.vol - P.vol) / P.vol * 100; if (d >= 5) good.push(`Volume en hausse : <b>${fmtVol(W.vol)}</b> (${pctTxt(d)} vs semaine d'avant).`); else if (d <= -20 && (k === 4 || dow >= 5)) bad.push(`Volume en baisse : <b>${fmtVol(W.vol)}</b> (${pctTxt(d)}).`); }
   // exercices : progrès / recul
@@ -1149,7 +1155,8 @@ function weekReport() {
   for (const x of ups) next.push(`<b>${esc(x.e.nom)}</b> : ${esc(x.ch.txt)}.`);
   const stalls = usedExercises().filter(e => { const c = coach(e.id); return c && c.stall; });
   if (stalls.length) next.push(`<b>${esc(stalls[0].nom)}</b> : garde la charge et vise +1 répétition par série.`);
-  if (W.n < 3) next.push(`Bloque tes <b>3 séances</b> dans ton agenda (lundi, mercredi, vendredi).`);
+  if (k === 5 && W.n < 3) next.push(`Place tes <b>${3 - W.n} séance${3 - W.n > 1 ? "s" : ""} restante${3 - W.n > 1 ? "s" : ""}</b> d'ici dimanche : la prochaine est la <b>séance ${todaySession()}</b>.`);
+  else if (W.n < 3) next.push(`Prévois tes <b>3 séances</b> de la semaine, aux jours qui t'arrangent (idéalement avec un jour de repos entre deux).`);
   if (!st || (st && Math.round((startDay(new Date()) - parseDay(st.daily[st.daily.length - 1].date)) / 864e5) >= 6)) next.push(`<b>Pèse-toi</b> une fois cette semaine, le matin à jeun.`);
   return { label, W, P, good, bad, next: next.slice(0, 3), prs, wdelta, st };
 }
@@ -2063,6 +2070,10 @@ function handleAct(ev) {
   switch (act) {
     case "back": history.length > 1 ? history.back() : (location.hash = "#/"); break;
     case "start": startSession(el.dataset.s); break;
+    case "save-draft-start": { const w = DB.draft; if (w) { w.status = "done"; w.finishedAt = new Date().toISOString(); w.rev = (w.rev || 0) + 1;
+      const mins = Math.round((Date.now() - new Date(w.startedAt)) / 60000); w.durationMin = mins > 0 && mins < 300 ? mins : null; markDirty(w);
+      if (!DB.workouts.some(x => x.id === w.id)) DB.workouts.push(w); DB.draft = null; saveNow(); }
+      closeSheet(); toast("Séance précédente enregistrée ✓"); startSession(el.dataset.s); break; }
     case "discard-start": DB.draft = null; saveNow(); closeSheet(); startSession(el.dataset.s); break;
     case "ck": toggleSet(el.closest(".srow")); break;
     case "copyprev": {

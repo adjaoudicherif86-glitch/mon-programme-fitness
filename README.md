@@ -24,6 +24,7 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
   - **Recherche** dans la table officielle **Ciqual 2025** de l'Anses (3 341 aliments, utilisable hors ligne).
   - **Saisie libre**.
   Objectifs calculés à partir de ton poids, ta taille, ton âge et ton activité (formule de Mifflin-St Jeor, déficit modéré pour perdre environ 0,4 à 0,6 kg par semaine, ~1,8 g de protéines par kg), ou fixés à la main. Le coach en tient compte dans son bilan.
+- **Jours libres** : la séance proposée est la suivante dans l'ordre A → B → C selon ta dernière séance réellement faite (ex. A mardi, B jeudi, C dimanche). « Envie d'une autre ? » permet d'en choisir une autre. Le coach ne signale une semaine incomplète que lorsqu'il n'est plus possible d'y placer les 3 séances. Une séance restée ouverte d'un autre jour peut être enregistrée en un geste avant d'en démarrer une nouvelle.
 - **Minuteur de repos** qui démarre quand tu valides une série.
 - **Cardio** : marche inclinée 15–20 min avec 3 niveaux.
 - **Installable sur l'écran d'accueil** de l'iPhone (PWA) et utilisable sans réseau une fois ouverte une première fois.
