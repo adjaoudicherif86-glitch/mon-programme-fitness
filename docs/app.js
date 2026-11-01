@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.2.0";
+const APP_VERSION = "7.3.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1013,8 +1013,8 @@ function aiContext() {
     if (st) L.push(`Poids : moyenne 7 j ${fmtKg(Math.round(st.cur * 10) / 10)} kg, départ ${fmtKg(st.start)} kg, objectif ${fmtKg(st.goal)} kg, tendance ${st.slope == null ? "inconnue" : fmtKg(Math.round(st.slope * 100) / 100) + " kg/semaine"}. Dernières pesées : ${st.daily.slice(-8).map(x => x.date + " " + fmtKg(num(x.kg))).join(", ")}.`);
     else L.push(`Objectif de poids : ${fmtKg(num(DB.settings.goalKg) || 77)} kg (pas encore de pesée).`);
   }
-  const nd = nutriDays(7).filter(x => x.n);
-  if (nd.length) { const t = nutriTargets(); L.push(`Nutrition (${nd.length} jour(s) notés sur 7) : moyenne ${Math.round(nd.reduce((a, x) => a + x.kcal, 0) / nd.length)} kcal et ${Math.round(nd.reduce((a, x) => a + x.p, 0) / nd.length)} g de protéines par jour${t ? ` (objectifs ${t.kcal} kcal, ${t.p} g de protéines)` : ""}. Aujourd'hui : ${Math.round(nd[nd.length - 1].date === isoDay() ? nd[nd.length - 1].kcal : 0)} kcal.`); }
+  const nd = nutriDays(7).filter(x => x.n && !x.incomplete); const ndSkip = nutriDays(7).filter(x => x.incomplete).length;
+  if (nd.length) { const t = nutriTargets(); L.push(`Nutrition (${nd.length} jour(s) complets notés sur 7${ndSkip ? `, ${ndSkip} jour(s) marqué(s) incomplet(s) par Chérif et donc ignorés` : ""}) : moyenne ${Math.round(nd.reduce((a, x) => a + x.kcal, 0) / nd.length)} kcal et ${Math.round(nd.reduce((a, x) => a + x.p, 0) / nd.length)} g de protéines par jour${t ? ` (objectifs ${t.kcal} kcal, ${t.p} g de protéines)` : ""}. Aujourd'hui : ${Math.round(nd[nd.length - 1].date === isoDay() ? nd[nd.length - 1].kcal : 0)} kcal.`); }
   L.push("Alertes automatiques : " + (coachAlerts().map(a => a.t + " — " + a.m).join(" / ") || "aucune") + ".");
   return L.join("\n");
 }
@@ -1138,7 +1138,7 @@ function weekReport() {
   // alertes
   for (const a of coachAlerts()) { if (a.lvl === "warn" && a.t !== "Poids" && a.t !== "Stagnation") bad.push(`<b>${esc(a.t)}</b> : ${esc(a.m)}`); if (a.t === "Stagnation" || a.t === "Équilibre") bad.push(esc(a.m).replace(/^([^:]+):/, "<b>$1</b> :")); if (a.t === "Poids") (a.lvl === "good" ? good : bad).push(esc(a.m)); }
   // nutrition
-  const nd = nutriDays(7).filter(x => x.n), nt = nutriTargets();
+  const nd = nutriDays(7).filter(x => x.n && !x.incomplete), nt = nutriTargets();
   if (nd.length >= 3 && nt) {
     const ap = nd.reduce((a, x) => a + x.p, 0) / nd.length, ak = nd.reduce((a, x) => a + x.kcal, 0) / nd.length;
     if (ap >= nt.p * 0.9) good.push(`Protéines au rendez-vous : <b>${Math.round(ap)} g/jour</b> en moyenne (objectif ${nt.p} g).`);
@@ -1254,8 +1254,11 @@ const SLOTS = [["pdj", "Petit-déjeuner"], ["dej", "Déjeuner"], ["col", "Collat
 const slotNow = () => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? "pdj" : h < 15 ? "dej" : h < 18 ? "col" : "din"; };
 const r1 = x => Math.round(x * 10) / 10;
 const f1 = x => fmtKg(r1(x));
-const mealsOf = d => DB.meals.filter(m => !m.deleted && m.date === d);
-function dayTotals(d) { const t = { kcal: 0, p: 0, c: 0, f: 0, n: 0, date: d }; for (const m of mealsOf(d)) { t.kcal += +m.kcal || 0; t.p += +m.p || 0; t.c += +m.c || 0; t.f += +m.f || 0; t.n++; } return t; }
+/* Un jour peut être marqué « incomplet » (repas oubliés) : il reste visible mais n'entre plus dans les moyennes ni dans l'analyse du coach.
+   Le marqueur est un enregistrement spécial du journal (flag) : il se synchronise comme un repas. */
+const mealsOf = d => DB.meals.filter(m => !m.deleted && m.date === d && !m.flag);
+const dayFlag = d => DB.meals.find(m => !m.deleted && m.date === d && m.flag === "incomplete") || null;
+function dayTotals(d) { const t = { kcal: 0, p: 0, c: 0, f: 0, n: 0, date: d, incomplete: !!dayFlag(d) }; for (const m of mealsOf(d)) { t.kcal += +m.kcal || 0; t.p += +m.p || 0; t.c += +m.c || 0; t.f += +m.f || 0; t.n++; } return t; }
 function nutriDays(n, end = isoDay()) { const out = []; const e = parseDay(end); for (let i = n - 1; i >= 0; i--) { const d = new Date(e); d.setDate(d.getDate() - i); out.push(dayTotals(isoDay(d))); } return out; }
 function nutriTargets() {
   const N = DB.settings.nutri || {};
@@ -1277,17 +1280,21 @@ function vNutri(d) {
   const prev = new Date(parseDay(day)); prev.setDate(prev.getDate() - 1); const next = new Date(parseDay(day)); next.setDate(next.getDate() + 1);
   const t = dayTotals(day), T = nutriTargets();
   const week = nutriDays(7, day);
-  const logged = week.filter(x => x.n);
+  const logged = week.filter(x => x.n && !x.incomplete); const skipped = week.filter(x => x.incomplete).length;
   let html = `<header class="top"><div><div class="eyebrow">${T ? `Objectif ${T.kcal} kcal · ${T.p} g de protéines` : "Journal alimentaire"}</div><h1 class="disp" style="margin-top:6px">Nutrition</h1></div>${syncBadge(true)}</header>${nutriSeg("repas")}
   <div class="daynav"><button class="iconbtn" data-go="#/nutrition/${isoDay(prev)}" aria-label="Jour précédent">${I.back}</button>
     <b>${day === isoDay() ? "Aujourd'hui" : esc(fmtDay(day, { weekday: "long", day: "numeric", month: "long" }))}</b>
     <button class="iconbtn" data-go="#/nutrition/${isoDay(next)}" ${day >= isoDay() ? "disabled style='opacity:.25'" : ""} aria-label="Jour suivant" style="transform:scaleX(-1)">${I.back}</button></div>
-  <section class="hero kcal">
-    <div class="eyebrow">Calories</div>
+  <section class="hero kcal ${t.incomplete ? "skipday" : ""}">
+    <div class="eyebrow">Calories${t.incomplete ? ' <span class="badge" style="color:#fff;border-color:#fff">jour non compté</span>' : ""}</div>
     <div class="kbig disp">${Math.round(t.kcal).toLocaleString("fr-FR")}<small>${T ? " / " + T.kcal.toLocaleString("fr-FR") : ""} kcal</small></div>
     ${T ? `<div class="pbar pbar-lg"><i style="width:${Math.min(100, t.kcal / T.kcal * 100).toFixed(1)}%"></i></div><div class="focus" style="margin:8px 0 0">${t.kcal <= T.kcal ? `Reste <b>${Math.round(T.kcal - t.kcal)} kcal</b>` : `<b>${Math.round(t.kcal - T.kcal)} kcal</b> au-dessus de l'objectif`}</div>` : `<div class="focus" style="margin:6px 0 0">Renseigne ta taille et ton âge plus bas pour calculer tes objectifs.</div>`}
     <div style="margin-top:14px">${barRow("Protéines", t.p, T && T.p, "g")}${barRow("Glucides", t.c, T && T.c, "g")}${barRow("Lipides", t.f, T && T.f, "g")}</div>
   </section>
+  <div class="daytools">
+    <label class="dayskip"><input type="checkbox" data-act="nu-skip" data-d="${day}" ${t.incomplete ? "checked" : ""}><span><b>Journée incomplète</b><small>${t.incomplete ? "Ce jour n'est pas compté dans tes moyennes ni par le coach." : "J'ai oublié des repas : ne pas compter ce jour dans mes moyennes."}</small></span></label>
+    <button class="chip" data-act="nu-forgot">+ Repas oublié</button>
+  </div>
   <div class="addgrid">
     <label class="addbtn">${I.camera}<span>Photo du plat</span><input type="file" accept="image/*" id="nu-photo" class="sr"></label>
     <button class="addbtn" data-act="nu-scan">${I.barcode}<span>Code-barres</span></button>
@@ -1304,7 +1311,7 @@ function vNutri(d) {
   // 7 jours
   if (logged.length) {
     const ak = Math.round(logged.reduce((a, x) => a + x.kcal, 0) / logged.length), ap = Math.round(logged.reduce((a, x) => a + x.p, 0) / logged.length);
-    html += `<div class="sec-title"><h2 class="disp">7 derniers jours</h2><span class="mut" style="font-size:13px">${logged.length} jour${logged.length > 1 ? "s" : ""} noté${logged.length > 1 ? "s" : ""}</span></div>
+    html += `<div class="sec-title"><h2 class="disp">7 derniers jours</h2><span class="mut" style="font-size:13px">${logged.length} jour${logged.length > 1 ? "s" : ""} complet${logged.length > 1 ? "s" : ""}${skipped ? ` · ${skipped} ignoré${skipped > 1 ? "s" : ""}` : ""}</span></div>
     <div class="kgrid" style="grid-template-columns:1fr 1fr"><div class="tile"><b>${ak}<span class="dim" style="font-size:15px"> kcal</span></b><small>moyenne par jour noté${T ? " · objectif " + T.kcal : ""}</small></div>
       <div class="tile"><b>${ap}<span class="dim" style="font-size:15px"> g</span></b><small>protéines par jour${T ? " · objectif " + T.p : ""}</small></div></div>
     <div class="card pad" style="margin-top:10px">${kcalChart(week, T && T.kcal)}</div>`;
@@ -1332,7 +1339,8 @@ function kcalChart(week, target) {
   const W = 340, H = 160, pb = 24, pt = 16; const max = Math.max(target || 0, ...week.map(d => d.kcal), 1) * 1.1; const bw = W / week.length;
   let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Calories des 7 derniers jours">`;
   week.forEach((d, i) => { const h = d.kcal ? Math.max(3, (H - pb - pt) * d.kcal / max) : 3; const x = i * bw + 6;
-    s += `<rect class="${d.kcal ? "bar" : "bar0"}" x="${x}" y="${H - pb - h}" width="${bw - 12}" height="${h}" rx="4"/>`;
+    s += `<rect class="${d.kcal ? "bar" : "bar0"}" x="${x}" y="${H - pb - h}" width="${bw - 12}" height="${h}" rx="4" ${d.incomplete ? 'style="fill:url(#hatch);opacity:.6"' : ""}/>`;
+    if (d.incomplete) s += `<text x="${x + (bw - 12) / 2}" y="${H - pb - h - 5}" text-anchor="middle">ignoré</text>`;
     s += `<text x="${x + (bw - 12) / 2}" y="${H - 8}" text-anchor="middle">${parseDay(d.date).toLocaleDateString("fr-FR", { weekday: "short" }).slice(0, 3)}</text>`; });
   if (target) { const y = H - pb - (H - pb - pt) * target / max; s += `<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="#fff" stroke-dasharray="5 5" stroke-width="1.5"/><text x="${W}" y="${y - 5}" text-anchor="end" class="lbl">${target} kcal</text>`; }
   return s + "</svg>";
@@ -1548,6 +1556,12 @@ function editMealSheet(m) {
     ${m.ing ? `<p class="dim" style="font-size:12px;margin:-4px 0 12px">${m.ing.map(x => `${esc(x.name)} ${Math.round(x.g)} g`).join(" · ")}</p>` : ""}
     ${slotSelect(m.slot)}
     <div class="btns"><button class="btn pri" data-act="nu-esave" data-id="${m.id}">Enregistrer</button><button class="btn ghost" data-act="nu-del" data-id="${m.id}">${I.trash}Supprimer</button><button class="btn ghost" data-close>Annuler</button></div>`);
+}
+function forgotSheet() {
+  sheet(`<h2 class="disp">Repas oublié</h2><p>Tu ne te souviens pas exactement ? Choisis une estimation : elle sera notée « repas oublié (estimation) ». Tu peux aussi plutôt marquer la journée comme incomplète.</p>
+    <div class="forgot">${[["Léger", "salade, sandwich, yaourt…", 400, 20, 45, 14], ["Normal", "assiette classique", 650, 35, 70, 22], ["Copieux", "fast-food, resto, plat en sauce", 950, 40, 95, 42]].map(([l, d, k, p, c, f]) => `<button class="forgotbtn" data-act="nu-forgot-add" data-k="${k}" data-p="${p}" data-c="${c}" data-f="${f}" data-l="${l}"><b>${l}</b><small>${d}</small><em>≈ ${k} kcal</em></button>`).join("")}</div>
+    ${slotSelect(nu.slot || slotNow())}
+    <div class="btns"><button class="btn sec" data-act="nu-manual">Je connais les calories (saisie libre)</button><button class="btn ghost" data-close>Annuler</button></div>`);
 }
 function manualSheet() {
   sheet(`<h2 class="disp">Saisie libre</h2><p>Pour un plat dont tu connais les valeurs (étiquette, restaurant, appli…).</p>
@@ -2113,6 +2127,14 @@ function handleAct(ev) {
     case "nu-scan-close": stopScan(); closeSheet(); break;
     case "nu-ean": lookupOFF(($("#nu-ean") || {}).value || ""); break;
     case "nu-manual": nu.day = route().d || isoDay(); manualSheet(); break;
+    case "nu-forgot": nu.day = route().d || isoDay(); forgotSheet(); break;
+    case "nu-forgot-add": { const d = el.dataset; addMeal({ slot: $("#nu-slot").value, name: `Repas oublié (estimation ${d.l.toLowerCase()})`, kcal: +d.k, p: +d.p, c: +d.c, f: +d.f, src: "oubli" }); saveNow(); closeSheet(); render(true); toast("Repas oublié ajouté ✓"); break; }
+    case "nu-skip": {
+      const day = el.dataset.d, f = dayFlag(day);
+      if (el.checked && !f) { const m = { id: uid(), date: day, flag: "incomplete", name: "Journée incomplète", kcal: 0, p: 0, c: 0, f: 0 }; markDirty(m); DB.meals.push(m); }
+      else if (!el.checked && f) { f.deleted = true; markDirty(f); }
+      saveNow(); render(true); toast(el.checked ? "Ce jour ne sera pas compté dans tes moyennes" : "Ce jour est de nouveau compté"); break;
+    }
     case "nu-pick-ciq": { const f = CIQ && CIQ.foods.find(x => String(x[0]) === el.dataset.code); if (!f) break; qtySheet({ name: f[1], sub: f[2], per100: { kcal: f[3], p: f[4], c: f[5], f: f[6] }, src: "ciqual", ref: f[0] }); break; }
     case "nu-pick-recent": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; qtySheet({ name: m.name, sub: "Récent", per100: m.per100, g: m.g || 100, src: m.src, ref: m.ref }); break; }
     case "nu-add": { nu.day = route().d || nu.day || isoDay(); const it = nu.item; const g = num($("#nu-g").value); if (!(g > 0 && g < 5000)) { toast("Quantité invalide."); break; }

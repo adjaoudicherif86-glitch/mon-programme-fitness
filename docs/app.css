@@ -443,3 +443,15 @@ div > .coach{margin:0}
 /* ───── V7.2 : jours libres ───── */
 .other{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px;font-size:13px;position:relative}
 .other .chip{cursor:pointer;color:var(--txt)}
+
+/* ───── V7.3 : journée incomplète / repas oublié ───── */
+.daytools{display:flex;align-items:center;gap:10px;margin-top:12px}
+.dayskip{flex:1;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line2);border-radius:14px;cursor:pointer}
+.dayskip input{width:22px;height:22px;accent-color:#fff;flex:none}
+.dayskip b{display:block;font-size:14px}.dayskip small{display:block;font-size:12px;color:var(--mut);line-height:1.3}
+.daytools .chip{height:auto;min-height:44px;padding:0 12px;cursor:pointer;color:var(--txt);white-space:nowrap}
+.skipday .kbig,.skipday .pbar,.skipday .mrow{opacity:.45}
+.forgot{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.forgotbtn{display:flex;flex-direction:column;gap:4px;align-items:flex-start;text-align:left;padding:12px;border-radius:14px;border:1px solid var(--line2);background:var(--s2);color:var(--txt)}
+.forgotbtn b{font-size:15px}.forgotbtn small{font-size:11px;color:var(--mut);line-height:1.3}.forgotbtn em{font-style:normal;font-weight:800;font-size:13px;margin-top:auto}
+@media (max-width:370px){.daytools{flex-direction:column;align-items:stretch}.forgot{grid-template-columns:1fr}}
