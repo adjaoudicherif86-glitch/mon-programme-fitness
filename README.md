@@ -23,6 +23,7 @@ Une application web en noir et blanc pour suivre mon programme full body (séanc
   - **Code-barres** : scan avec la caméra (ou saisie des chiffres), valeurs exactes d'Open Food Facts.
   - **Recherche** dans la table officielle **Ciqual 2025** de l'Anses (3 341 aliments, utilisable hors ligne).
   - **Saisie libre**.
+  **Plusieurs portions ?** Partout où tu notes un repas (recherche, code-barres, photo, saisie libre) et sur un repas déjà enregistré : ×½, ×2, ×3 ou n'importe quel nombre ; calories et macros sont multipliées.
   **Repas oublié ?** Coche « Journée incomplète » : le jour reste visible mais n'est plus compté dans les moyennes ni par le coach (réversible). Ou ajoute « + Repas oublié » avec une estimation rapide (léger ≈ 400, normal ≈ 650, copieux ≈ 950 kcal).
   Objectifs calculés à partir de ton poids, ta taille, ton âge et ton activité (formule de Mifflin-St Jeor, déficit modéré pour perdre environ 0,4 à 0,6 kg par semaine, ~1,8 g de protéines par kg), ou fixés à la main. Le coach en tient compte dans son bilan.
 - **Jours libres** : la séance proposée est la suivante dans l'ordre A → B → C selon ta dernière séance réellement faite (ex. A mardi, B jeudi, C dimanche). « Envie d'une autre ? » permet d'en choisir une autre. Le coach ne signale une semaine incomplète que lorsqu'il n'est plus possible d'y placer les 3 séances. Une séance restée ouverte d'un autre jour peut être enregistrée en un geste avant d'en démarrer une nouvelle.

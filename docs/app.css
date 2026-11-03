@@ -455,3 +455,12 @@ div > .coach{margin:0}
 .forgotbtn{display:flex;flex-direction:column;gap:4px;align-items:flex-start;text-align:left;padding:12px;border-radius:14px;border:1px solid var(--line2);background:var(--s2);color:var(--txt)}
 .forgotbtn b{font-size:15px}.forgotbtn small{font-size:11px;color:var(--mut);line-height:1.3}.forgotbtn em{font-style:normal;font-weight:800;font-size:13px;margin-top:auto}
 @media (max-width:370px){.daytools{flex-direction:column;align-items:stretch}.forgot{grid-template-columns:1fr}}
+
+/* ───── V7.4 : multiplicateur de portions ───── */
+.multrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.multrow > span{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);width:100%}
+.multchips{display:flex;gap:6px}
+.multchips .chip{cursor:pointer;min-width:46px;justify-content:center;color:var(--txt)}
+.multin{display:flex;align-items:center;gap:6px;font-weight:800;margin-left:auto}
+.multin input{width:64px;height:40px;border-radius:10px;border:1px solid var(--line2);background:var(--s2);text-align:center;font-size:16px;font-weight:700}
+.multchips .chip.on{background:var(--txt);color:var(--inv);border-color:var(--txt)}

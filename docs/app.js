@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.3.0";
+const APP_VERSION = "7.4.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -1374,17 +1374,29 @@ function openSearch(slot) {
   loadCiq().then(() => { const l = $("#nu-list"); if (l && nu.q) l.innerHTML = searchList(); }).catch(() => {});
 }
 /* fiche quantité commune (Ciqual, code-barres, récents) */
+/* Multiplicateur de portions (×½, ×2, ×3 ou n'importe quel nombre) */
+const multHTML = (lbl = "Portions") => `<div class="multrow"><span>${lbl}</span><div class="multchips">${[["0.5", "×½"], ["1", "×1"], ["2", "×2"], ["3", "×3"]].map(([v, l]) => `<button type="button" class="chip ${v === "1" ? "on" : ""}" data-mult="${v}">${l}</button>`).join("")}</div>
+  <label class="multin">× <input id="nu-mult" inputmode="decimal" value="1" aria-label="Multiplier par"></label></div>`;
+const multVal = () => { const v = num(($("#nu-mult") || {}).value); return v > 0 && v <= 50 ? v : 1; };
+function bindMult(cb) {
+  const inp = $("#nu-mult"); if (!inp) return;
+  const sync = () => { const v = multVal(); $$(".sheet [data-mult]").forEach(b => b.classList.toggle("on", +b.dataset.mult === v)); cb && cb(v); };
+  $$(".sheet [data-mult]").forEach(b => b.onclick = () => { inp.value = String(b.dataset.mult).replace(".", ","); sync(); });
+  inp.addEventListener("input", sync);
+}
+const multTxt = k => k === 1 ? "" : ` (×${fmtKg(k)})`;
 function qtySheet(item) {
   nu.item = item; const g0 = item.g || 100;
   sheet(`<h2 class="disp" style="font-size:24px">${esc(item.name)}</h2><p>${esc(item.sub || "")}${item.per100 ? ` · ${Math.round(item.per100.kcal)} kcal pour 100 g` : ""}</p>
     ${item.img ? `<img src="${esc(item.img)}" alt="" style="max-height:120px;border-radius:12px;margin:0 auto 12px;display:block" class="bw">` : ""}
     <div class="field"><label for="nu-g">Quantité (g)</label><input id="nu-g" inputmode="decimal" value="${g0}"></div>
     <div class="chips" style="margin-bottom:12px">${(item.portions || [50, 100, 150, 200, 250]).map(v => `<button class="chip" data-g="${v}">${v} g</button>`).join("")}</div>
+    ${multHTML()}
     <div class="qres" id="nu-res"></div>
     ${slotSelect(nu.slot || slotNow())}
     <div class="btns"><button class="btn pri" data-act="nu-add">Ajouter au journal</button><button class="btn ghost" data-close>Annuler</button></div>`);
-  const upd = () => { const g = num($("#nu-g").value) || 0; const p = item.per100; $("#nu-res").innerHTML = `<b>${Math.round(p.kcal * g / 100)} kcal</b><span>P ${f1(p.p * g / 100)} g · G ${f1(p.c * g / 100)} g · L ${f1(p.f * g / 100)} g</span>`; };
-  $("#nu-g").addEventListener("input", upd); $$(".sheet [data-g]").forEach(b => b.onclick = () => { $("#nu-g").value = b.dataset.g; upd(); }); upd();
+  const upd = () => { const k = multVal(), g = (num($("#nu-g").value) || 0) * k; const p = item.per100; $("#nu-res").innerHTML = `<b>${Math.round(p.kcal * g / 100)} kcal</b><span>${k !== 1 ? `${fmtKg(Math.round(g))} g au total · ` : ""}P ${f1(p.p * g / 100)} g · G ${f1(p.c * g / 100)} g · L ${f1(p.f * g / 100)} g</span>`; };
+  $("#nu-g").addEventListener("input", upd); $$(".sheet [data-g]").forEach(b => b.onclick = () => { $("#nu-g").value = b.dataset.g; upd(); }); bindMult(upd); upd();
 }
 function addMeal(o) {
   const m = { id: uid(), date: o.date || nu.day || isoDay(), slot: o.slot || slotNow(), name: o.name, g: o.g || null, kcal: r1(o.kcal), p: r1(o.p), c: r1(o.c), f: r1(o.f), per100: o.per100 || null, src: o.src, ref: o.ref || null };
@@ -1537,6 +1549,7 @@ function photoSheet(state) {
         <button class="linkbtn" data-act="nu-pcomp" data-i="${i}">${x.ing ? `✎ ${x.ing.length} ingrédient${x.ing.length > 1 ? "s" : ""} · modifier` : "✎ Modifier / détailler les ingrédients"}</button></div>
       <input inputmode="decimal" value="${Math.round(x.g)}" data-pi="${i}" aria-label="Grammes de ${esc(x.name)}"><span class="mut">g</span><button class="chip" data-act="nu-pdel" data-i="${i}" aria-label="Retirer">✕</button></div>`).join("")}
       <button class="linkbtn" style="padding:12px 0" data-act="nu-pnew">+ Ajouter un aliment oublié</button></div>
+    ${multHTML("Nombre d'assiettes")}
     <div class="qres" id="nu-ptot"><b>${Math.round(tot.kcal)} kcal</b><span>P ${f1(tot.p)} g · G ${f1(tot.c)} g · L ${f1(tot.f)} g</span></div>
     ${P.note ? `<p class="dim" style="font-size:12px">${esc(P.note)}</p>` : ""}
     ${slotSelect(nu.slot || slotNow())}
@@ -1546,16 +1559,24 @@ function photoSheet(state) {
     const i = +inp.dataset.pi, x = P.items[i], g = num(inp.value); if (!(g > 0)) return; const k = g / x.g;
     Object.assign(x, { g, kcal: x.kcal * k, p: x.p * k, c: x.c * k, f: x.f * k }); if (x.ing) x.ing.forEach(y => { y.g = y.g * k; });
     const s1 = $(`[data-pis="${i}"]`); if (s1) s1.textContent = `${Math.round(x.kcal)} kcal · P ${f1(x.p)} · G ${f1(x.c)} · L ${f1(x.f)}`;
-    const t = P.items.reduce((a, y) => ({ kcal: a.kcal + y.kcal, p: a.p + y.p, c: a.c + y.c, f: a.f + y.f }), { kcal: 0, p: 0, c: 0, f: 0 });
-    const tt = $("#nu-ptot"); if (tt) tt.innerHTML = `<b>${Math.round(t.kcal)} kcal</b><span>P ${f1(t.p)} g · G ${f1(t.c)} g · L ${f1(t.f)} g</span>`; }));
+    photoTot(); }));
+  bindMult(photoTot); photoTot();
+}
+function photoTot() {
+  const P = nu.photo; if (!P || !P.items) return; const k = multVal();
+  const t = P.items.reduce((a, y) => ({ kcal: a.kcal + y.kcal * k, p: a.p + y.p * k, c: a.c + y.c * k, f: a.f + y.f * k }), { kcal: 0, p: 0, c: 0, f: 0 });
+  const tt = $("#nu-ptot"); if (tt) tt.innerHTML = `<b>${Math.round(t.kcal)} kcal</b><span>${k !== 1 ? `×${fmtKg(k)} · ` : ""}P ${f1(t.p)} g · G ${f1(t.c)} g · L ${f1(t.f)} g</span>`;
 }
 function editMealSheet(m) {
   sheet(`<h2 class="disp" style="font-size:24px">${esc(m.name)}</h2><p>${Math.round(m.kcal)} kcal · P ${f1(m.p)} · G ${f1(m.c)} · L ${f1(m.f)}${m.src === "photo" ? " · estimation photo" : ""}</p>
     ${m.per100 || m.g ? `<div class="field"><label for="nu-eg">Quantité (g)</label><input id="nu-eg" inputmode="decimal" value="${m.g || 100}"></div>` : `<div class="field"><label for="nu-ek">Calories</label><input id="nu-ek" inputmode="numeric" value="${Math.round(m.kcal)}"></div>`}
+    ${multHTML("Multiplier ce repas")}
+    <div class="qres" id="nu-eres" hidden></div>
     <button class="btn sec block" style="margin-bottom:12px" data-act="nu-mcomp" data-id="${m.id}">${m.ing ? `✎ Ingrédients (${m.ing.length})` : "✎ Modifier / détailler les ingrédients"}</button>
     ${m.ing ? `<p class="dim" style="font-size:12px;margin:-4px 0 12px">${m.ing.map(x => `${esc(x.name)} ${Math.round(x.g)} g`).join(" · ")}</p>` : ""}
     ${slotSelect(m.slot)}
     <div class="btns"><button class="btn pri" data-act="nu-esave" data-id="${m.id}">Enregistrer</button><button class="btn ghost" data-act="nu-del" data-id="${m.id}">${I.trash}Supprimer</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  bindMult(k => { const el = $("#nu-eres"); if (!el) return; el.hidden = k === 1; el.innerHTML = `<b>${Math.round(m.kcal * k)} kcal</b><span>×${fmtKg(k)} · P ${f1(m.p * k)} · G ${f1(m.c * k)} · L ${f1(m.f * k)}</span>`; });
 }
 function forgotSheet() {
   sheet(`<h2 class="disp">Repas oublié</h2><p>Tu ne te souviens pas exactement ? Choisis une estimation : elle sera notée « repas oublié (estimation) ». Tu peux aussi plutôt marquer la journée comme incomplète.</p>
@@ -1563,12 +1584,20 @@ function forgotSheet() {
     ${slotSelect(nu.slot || slotNow())}
     <div class="btns"><button class="btn sec" data-act="nu-manual">Je connais les calories (saisie libre)</button><button class="btn ghost" data-close>Annuler</button></div>`);
 }
+function manualPreview() {
+  const k = multVal(), el = $("#nu-mres"); if (!el) return; const v = x => (num($("#nu-m-" + x).value) || 0) * k;
+  el.hidden = !(num($("#nu-m-k").value) > 0); el.innerHTML = `<b>${Math.round(v("k"))} kcal</b><span>${k !== 1 ? `${fmtKg(k)} portions · ` : ""}P ${f1(v("p"))} · G ${f1(v("c"))} · L ${f1(v("f"))}</span>`;
+}
 function manualSheet() {
   sheet(`<h2 class="disp">Saisie libre</h2><p>Pour un plat dont tu connais les valeurs (étiquette, restaurant, appli…).</p>
     <div class="field"><label for="nu-mn">Nom</label><input id="nu-mn" placeholder="Ex. : Bowl poulet riz" autocomplete="off"></div>
+    <p class="dim" style="font-size:12px;margin:0 0 6px">Valeurs pour <b>une</b> portion :</p>
     <div class="wform" style="grid-template-columns:repeat(4,1fr)">${[["k", "kcal"], ["p", "Prot. g"], ["c", "Gluc. g"], ["f", "Lip. g"]].map(([k, l]) => `<div class="field"><label for="nu-m-${k}">${l}</label><input id="nu-m-${k}" inputmode="decimal"></div>`).join("")}</div>
+    ${multHTML("Nombre de portions")}
+    <div class="qres" id="nu-mres" hidden></div>
     ${slotSelect(nu.slot || slotNow())}
     <div class="btns"><button class="btn pri" data-act="nu-madd">Ajouter au journal</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  bindMult(manualPreview); $$(".sheet .wform input").forEach(i => i.addEventListener("input", manualPreview));
 }
 
 /* ───────────── Poids ───────────── */
@@ -2137,18 +2166,20 @@ function handleAct(ev) {
     }
     case "nu-pick-ciq": { const f = CIQ && CIQ.foods.find(x => String(x[0]) === el.dataset.code); if (!f) break; qtySheet({ name: f[1], sub: f[2], per100: { kcal: f[3], p: f[4], c: f[5], f: f[6] }, src: "ciqual", ref: f[0] }); break; }
     case "nu-pick-recent": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; qtySheet({ name: m.name, sub: "Récent", per100: m.per100, g: m.g || 100, src: m.src, ref: m.ref }); break; }
-    case "nu-add": { nu.day = route().d || nu.day || isoDay(); const it = nu.item; const g = num($("#nu-g").value); if (!(g > 0 && g < 5000)) { toast("Quantité invalide."); break; }
+    case "nu-add": { nu.day = route().d || nu.day || isoDay(); const it = nu.item; const g = num($("#nu-g").value) * multVal(); if (!(g > 0 && g < 20000)) { toast("Quantité invalide."); break; }
       const p = it.per100; addMeal({ slot: $("#nu-slot").value, name: it.name, g, kcal: p.kcal * g / 100, p: p.p * g / 100, c: p.c * g / 100, f: p.f * g / 100, per100: p, src: it.src, ref: it.ref });
       saveNow(); closeSheet(); render(true); toast(it.name.slice(0, 30) + " ajouté ✓"); break; }
     case "nu-madd": { const name = $("#nu-mn").value.trim(), k = num($("#nu-m-k").value); if (!name || !(k >= 0 && k < 10000)) { toast("Indique au moins un nom et les calories."); break; }
-      addMeal({ slot: $("#nu-slot").value, name, kcal: k, p: num($("#nu-m-p").value) || 0, c: num($("#nu-m-c").value) || 0, f: num($("#nu-m-f").value) || 0, src: "manuel" }); saveNow(); closeSheet(); render(true); toast("Ajouté ✓"); break; }
+      const mu = multVal(); addMeal({ slot: $("#nu-slot").value, name: name + multTxt(mu), kcal: k * mu, p: (num($("#nu-m-p").value) || 0) * mu, c: (num($("#nu-m-c").value) || 0) * mu, f: (num($("#nu-m-f").value) || 0) * mu, src: "manuel" }); saveNow(); closeSheet(); render(true); toast("Ajouté ✓"); break; }
     case "nu-edit": { const m = DB.meals.find(x => x.id === el.dataset.id); if (m) editMealSheet(m); break; }
     case "nu-esave": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break;
       const eg = $("#nu-eg"); if (eg) { const g = num(eg.value); if (!(g > 0 && g < 5000)) { toast("Quantité invalide."); break; } const k = m.per100 ? null : g / (m.g || g);
         if (m.ing && m.g) { const k2 = g / m.g; m.ing.forEach(y => { y.g = r1(y.g * k2); }); }
         if (m.per100) Object.assign(m, { g, kcal: r1(m.per100.kcal * g / 100), p: r1(m.per100.p * g / 100), c: r1(m.per100.c * g / 100), f: r1(m.per100.f * g / 100) }); else Object.assign(m, { g, kcal: r1(m.kcal * k), p: r1(m.p * k), c: r1(m.c * k), f: r1(m.f * k) }); }
       else { const k = num($("#nu-ek").value); if (k >= 0) m.kcal = k; }
-      m.slot = $("#nu-slot").value; markDirty(m); saveNow(); closeSheet(); render(true); break; }
+      const mu = multVal();
+      if (mu !== 1) { Object.assign(m, { g: m.g ? r1(m.g * mu) : m.g, kcal: r1(m.kcal * mu), p: r1(m.p * mu), c: r1(m.c * mu), f: r1(m.f * mu) }); if (m.ing) m.ing.forEach(y => { y.g = r1(y.g * mu); }); }
+      m.slot = $("#nu-slot").value; markDirty(m); saveNow(); closeSheet(); render(true); if (mu !== 1) toast(`Repas multiplié par ${fmtKg(mu)} ✓`); break; }
     case "nu-del": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; m.deleted = true; markDirty(m); saveNow(); closeSheet(); render(true);
       toast("Supprimé", () => { m.deleted = false; markDirty(m); saveNow(); render(true); }); break; }
     case "nu-pcomp": { nu.slot = $("#nu-slot") ? $("#nu-slot").value : nu.slot; const i = +el.dataset.i, x = nu.photo.items[i]; openComp({ name: x.name, ing: x.ing, back: "photo", idx: i, est: x }); break; }
@@ -2164,7 +2195,7 @@ function handleAct(ev) {
     case "cp-ok": compDone(); break;
     case "cp-back": { const c = nu.comp; nu.comp = null; if (c && c.back === "meal") { const m = DB.meals.find(x => x.id === c.mealId); if (m) editMealSheet(m); else closeSheet(); } else photoSheet(); break; }
     case "nu-pdel": { nu.slot = $("#nu-slot").value; nu.photo.items.splice(+el.dataset.i, 1); photoSheet(); break; }
-    case "nu-padd": { const slot = $("#nu-slot").value; for (const x of nu.photo.items) addMeal({ slot, name: x.name, g: Math.round(x.g), kcal: x.kcal, p: x.p, c: x.c, f: x.f, per100: { kcal: x.kcal * 100 / x.g, p: x.p * 100 / x.g, c: x.c * 100 / x.g, f: x.f * 100 / x.g }, src: x.ing ? "compo" : "photo", ing: x.ing || null });
+    case "nu-padd": { const slot = $("#nu-slot").value, mu = multVal(); for (const x of nu.photo.items) addMeal({ slot, name: x.name, g: Math.round(x.g * mu), kcal: x.kcal * mu, p: x.p * mu, c: x.c * mu, f: x.f * mu, per100: { kcal: x.kcal * 100 / x.g, p: x.p * 100 / x.g, c: x.c * 100 / x.g, f: x.f * 100 / x.g }, src: x.ing ? "compo" : "photo", ing: x.ing ? x.ing.map(y => ({ ...y, g: y.g * mu })) : null });
       saveNow(); closeSheet(); render(true); toast("Repas ajouté ✓"); break; }
     case "nu-goal": {
       const N = DB.settings.nutri = { ...(DB.settings.nutri || {}) };
