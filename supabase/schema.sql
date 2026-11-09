@@ -8,7 +8,7 @@
 create table if not exists public.workouts (
   id          uuid primary key,
   user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  session     text not null check (session in ('A','B','C')),
+  session     text not null check (session in ('A','B','C','L')),
   date        date not null,
   data        jsonb not null,
   deleted     boolean not null default false,

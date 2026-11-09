@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.4.0";
+const APP_VERSION = "7.5.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -249,7 +249,11 @@ const removedOf = s => ((DB.settings.removed || {})[s] || []);
 const progEx = s => EX.filter(e => e.s === s && !removedOf(s).includes(e.id));
 /* Jours libres : la séance proposée est simplement la suivante dans l'ordre A → B → C. */
 const ORDER = ["A", "B", "C"];
-function lastDone() { return sorted()[0] || null; }
+/* Séance libre (« L ») : on y ajoute ses propres exercices. Elle compte comme une séance dans la semaine,
+   mais ne change pas l'ordre A → B → C du programme. */
+const FREE = { nom: "Séance libre", focus: "Tes exercices du jour, au choix" };
+const sesOf = k => SES[k] || (k === "L" ? FREE : { nom: "Séance " + k, focus: "" });
+function lastDone() { return sorted().find(w => w.session !== "L") || null; }
 function todaySession() { const l = lastDone(); return l ? ORDER[(ORDER.indexOf(l.session) + 1) % ORDER.length] : "A"; }
 const nextSession = todaySession;
 function lastOf(s) { return sorted().find(w => w.session === s) || null; }
@@ -265,7 +269,7 @@ function vHome() {
   if (DB.draft) {
     const d = DB.draft;
     draft = `<a class="card pad" href="#/seance" style="display:flex;align-items:center;gap:14px;text-decoration:none;margin-bottom:14px;border-color:#fff">
-      <div style="flex:1"><div class="eyebrow">En cours</div><div class="disp" style="font-size:26px;margin-top:4px">${esc(SES[d.session].nom)}</div>
+      <div style="flex:1"><div class="eyebrow">En cours</div><div class="disp" style="font-size:26px;margin-top:4px">${esc(sesOf(d.session).nom)}</div>
       <small class="mut">${wSets(d)} / ${wTotalSets(d)} séries validées</small></div><span class="btn pri sm">Reprendre</span></a>`;
   }
   let lastHTML = `<div class="card empty"><div class="disp">Aucune séance</div>Termine ta première séance : tes charges apparaîtront ici et seront proposées la fois suivante.</div>`;
@@ -285,13 +289,13 @@ function vHome() {
   ${draft}
   <section class="hero">
     <div class="big disp" aria-hidden="true">${s}</div>
-    <div class="eyebrow">Prochaine séance${lastDone() ? ` · après la ${esc(SES[lastDone().session].nom)} du ${esc(fmtDay(lastDone().date, { weekday: "long", day: "numeric", month: "short" }))}` : ""}</div>
+    <div class="eyebrow">Prochaine séance${lastDone() ? ` · après la ${esc(sesOf(lastDone().session).nom)} du ${esc(fmtDay(lastDone().date, { weekday: "long", day: "numeric", month: "short" }))}` : ""}</div>
     <h2 class="disp">${esc(S.nom)}</h2>
     <div class="focus">${esc(S.focus)} · ~55 min + cardio</div>
     <ol>${exs.map(e => `<li>${esc(e.nom)}<span>${e.series} × ${repTxt(e)}</span></li>`).join("")}${((DB.settings.extras || {})[s] || []).map(d => { const e = exOf(d.id) || d; return `<li>${esc(e.nom)}<span>${d.series || 3} × ${e.reps ? repTxt(e) : "–"}</span></li>`; }).join("")}</ol>
     <div class="row2"><a class="btn sec" href="#/programme/${s}">Voir</a>
       <button class="btn pri" data-act="start" data-s="${s}">${I.play}Commencer</button></div>
-    <div class="other"><span class="mut">Envie d'une autre ?</span>${ORDER.filter(k => k !== s).map(k => `<button class="chip" data-act="start" data-s="${k}">Séance ${k}</button>`).join("")}</div>
+    <div class="other"><span class="mut">Envie d'une autre ?</span>${ORDER.filter(k => k !== s).map(k => `<button class="chip" data-act="start" data-s="${k}">Séance ${k}</button>`).join("")}<button class="chip" data-act="start" data-s="L">Séance libre</button></div>
   </section>
   ${(() => { const a = coachAlerts().filter(x => x.lvl === "warn"); return a.length ? `<a class="card pad homealert" href="#/coach"><div class="eyebrow">Coach · ${a.length} alerte${a.length > 1 ? "s" : ""}</div>${a.slice(0, 2).map(x => `<p><b>${esc(x.t)}</b> — ${esc(x.m.length > 110 ? x.m.slice(0, 108) + "…" : x.m)}</p>`).join("")}</a>` : ""; })()}
   ${weightCardHome()}
@@ -489,14 +493,14 @@ function confirmPick(def) {
     sheet(`<h2 class="disp">${esc(def.nom)}</h2><p>${esc([def.machine, def.en].filter(Boolean).join(" · "))}</p>
       ${def.lib ? `<img src="${def.thumb}" alt="" style="width:100%;border-radius:14px;margin-bottom:12px">` : ""}
       <div class="field"><label for="pk-n">Séries</label><input id="pk-n" inputmode="numeric" value="${def.series || 3}"></div>
-      <div class="btns"><button class="btn pri" data-act="pick-ok">Ajouter à la séance ${w.session}</button><button class="btn ghost" data-act="pick-back">Retour à la liste</button></div>`);
+      <div class="btns"><button class="btn pri" data-act="pick-ok">Ajouter à la ${esc(sesOf(w.session).nom.toLowerCase())}</button><button class="btn ghost" data-act="pick-back">Retour à la liste</button></div>`);
     pick.def = def; return;
   }
   sheet(`<h2 class="disp">${esc(def.nom)}</h2><p>${esc([def.machine, def.en].filter(Boolean).join(" · "))}</p>
     ${def.lib ? `<img src="${def.thumb}" alt="" style="width:100%;border-radius:14px;margin-bottom:12px">` : ""}
     <div class="row2"><div class="field"><label for="pk-n">Séries</label><input id="pk-n" inputmode="numeric" value="3"></div>
       <div class="field"><label>Type</label><input value="${def.type === "time" ? "Durée (secondes)" : "Répétitions"}" disabled></div></div>
-    ${route().name === "wk" ? `<label class="set-item" style="padding:12px 0;border:0;cursor:pointer"><input type="checkbox" id="pk-keep" style="width:22px;height:22px;accent-color:#fff"><div><b>L'ajouter aussi aux prochaines séances ${w.session}</b><small>Il sera proposé automatiquement. Tu peux le retirer depuis l'onglet Programme.</small></div></label>` : ""}
+    ${route().name === "wk" && w.session !== "L" ? `<label class="set-item" style="padding:12px 0;border:0;cursor:pointer"><input type="checkbox" id="pk-keep" style="width:22px;height:22px;accent-color:#fff"><div><b>L'ajouter aussi aux prochaines séances ${w.session}</b><small>Il sera proposé automatiquement. Tu peux le retirer depuis l'onglet Programme.</small></div></label>` : ""}
     <div class="btns"><button class="btn pri" data-act="pick-ok">Ajouter à la séance</button><button class="btn ghost" data-act="pick-back">Retour à la liste</button></div>`);
   pick.def = def;
 }
@@ -547,10 +551,10 @@ function startSession(s) {
   const d = DB.draft;
   if (d && (d.session !== s || d.date !== isoDay())) {
     if (!wSets(d)) { DB.draft = null; saveNow(); } // séance ouverte sans aucune série validée : on la remplace
-    else return sheet(`<h2 class="disp">Séance en cours</h2><p>La ${esc(SES[d.session].nom)} du ${esc(fmtDay(d.date, { weekday: "long", day: "numeric", month: "long" }))} est encore ouverte (${wSets(d)} série${wSets(d) > 1 ? "s" : ""} validée${wSets(d) > 1 ? "s" : ""}). Que veux-tu faire ?</p>
-      <div class="btns"><button class="btn pri" data-act="save-draft-start" data-s="${s}">L'enregistrer et démarrer la séance ${s}</button>
-      <a class="btn sec" href="#/seance" data-close>Reprendre la ${esc(SES[d.session].nom)}</a>
-      <button class="btn ghost" data-act="discard-start" data-s="${s}">L'abandonner et démarrer la séance ${s}</button>
+    else return sheet(`<h2 class="disp">Séance en cours</h2><p>La ${esc(sesOf(d.session).nom)} du ${esc(fmtDay(d.date, { weekday: "long", day: "numeric", month: "long" }))} est encore ouverte (${wSets(d)} série${wSets(d) > 1 ? "s" : ""} validée${wSets(d) > 1 ? "s" : ""}). Que veux-tu faire ?</p>
+      <div class="btns"><button class="btn pri" data-act="save-draft-start" data-s="${s}">L'enregistrer et démarrer la ${esc(sesOf(s).nom.toLowerCase())}</button>
+      <a class="btn sec" href="#/seance" data-close>Reprendre la ${esc(sesOf(d.session).nom)}</a>
+      <button class="btn ghost" data-act="discard-start" data-s="${s}">L'abandonner et démarrer la ${esc(sesOf(s).nom.toLowerCase())}</button>
       <button class="btn ghost" data-close>Annuler</button></div>`);
   }
   if (!DB.draft) { DB.draft = newWorkout(s); saveNow(); }
@@ -614,6 +618,7 @@ function vWorkout() {
     return `<header class="top"><div><div class="eyebrow">Démarrer</div><h1 class="disp" style="margin-top:6px">Quelle séance ?</h1></div></header>
       ${Object.entries(SES).map(([k, v]) => `<button class="card hcard" style="width:100%;text-align:left;${k === t ? "border-color:#fff" : ""}" data-act="start" data-s="${k}">
         <span class="L disp">${k}</span><span><b>${esc(v.nom)}</b><small>${esc(v.focus)}${lastOf(k) ? ` · dernière : ${esc(fmtShort(lastOf(k).date))}` : ""}</small></span><span class="v">${k === t ? '<span class="badge" style="color:#fff;border-color:#fff">Prochaine</span>' : ""}</span></button>`).join("")}
+      <button class="card hcard" style="width:100%;text-align:left" data-act="start" data-s="L"><span class="L disp">+</span><span><b>Séance libre</b><small>Tu choisis tes exercices dans la bibliothèque · compte comme une séance de la semaine</small></span><span class="v"></span></button>
       <p class="mut" style="font-size:13px;margin-top:16px">Tes séries sont enregistrées automatiquement à chaque saisie. Tu peux fermer l'application et reprendre plus tard.</p>`;
   }
   return editorHTML(w, "draft");
@@ -624,13 +629,14 @@ function editorHTML(w, mode) {
   const done = wSets(w), tot = wTotalSets(w);
   const isEdit = mode === "edit";
   return `<div class="wk-head"><div class="r">
-      ${isEdit ? `<button class="back" data-act="edit-cancel">${I.back}Annuler</button>` : `<div><div class="eyebrow">${esc(fmtDay(w.date, { weekday: "long" }))} · ${esc(fmtShort(w.date))}</div><h1 class="disp">${esc(SES[w.session].nom)}</h1></div>`}
+      ${isEdit ? `<button class="back" data-act="edit-cancel">${I.back}Annuler</button>` : `<div><div class="eyebrow">${esc(fmtDay(w.date, { weekday: "long" }))} · ${esc(fmtShort(w.date))}</div><h1 class="disp">${esc(sesOf(w.session).nom)}</h1></div>`}
       ${isEdit ? `<div class="disp" style="font-size:22px">Modifier</div>` : `<div class="clock" id="clock"></div>`}
     </div><div class="prog"><i id="progbar" style="width:${tot ? (done / tot) * 100 : 0}%"></i></div></div>
     ${isEdit ? `<div class="field" style="margin-top:16px"><label for="w-date">Date de la séance</label><input type="date" id="w-date" data-w="date" value="${esc(w.date)}" max="${isoDay()}"></div>` : ""}
     ${exs.map(e => exBlockHTML(e, w, mode)).join("")}
     ${Object.keys(w.entries).filter(id => !exs.some(e => e.id === id) && exOf(id)).map(id => exBlockHTML(exOf(id), w, mode)).join("")}
-    <button type="button" class="btn sec block addex" data-act="add-ex">+ Ajouter un exercice</button>
+    ${w.session === "L" && !Object.keys(w.entries).length ? `<div class="card empty" style="padding:22px;margin-top:16px"><div class="disp" style="font-size:22px">Séance libre</div>Ajoute les exercices que tu fais aujourd'hui : bibliothèque de 750 exercices, ceux de ton programme, ou les tiens.</div>` : ""}
+    <button type="button" class="btn ${w.session === "L" && !Object.keys(w.entries).length ? "pri" : "sec"} block addex" data-act="add-ex">+ Ajouter un exercice</button>
     ${cardioHTML(w)}
     <div class="field" style="margin-top:16px"><label for="w-note">Note de séance</label><textarea id="w-note" data-w="note" placeholder="Forme du jour, sommeil, sensations…">${esc(w.note || "")}</textarea></div>
     ${isEdit
@@ -710,7 +716,7 @@ function vHistory() {
     const m = parseDay(w.date).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
     if (m !== cur) { cur = m; html += `<div class="hgrp eyebrow">${esc(m)}</div>`; }
     html += `<a class="card hcard" href="#/historique/${w.id}"><span class="L disp">${w.session}</span>
-      <span><b>${esc(fmtDay(w.date))}${w.importedFrom ? '<span class="badge">import</span>' : ""}${w.conflict ? '<span class="badge">conflit</span>' : ""}</b><small>${wSets(w)} séries${w.durationMin ? " · " + w.durationMin + " min" : ""}${w.cardio && w.cardio.done ? " · cardio ✓" : ""}</small></span>
+      <span><b>${esc(fmtDay(w.date))}${w.importedFrom ? '<span class="badge">import</span>' : ""}${w.conflict ? '<span class="badge">conflit</span>' : ""}</b><small>${w.session === "L" ? "Séance libre · " : ""}${wSets(w)} séries${w.durationMin ? " · " + w.durationMin + " min" : ""}${w.cardio && w.cardio.done ? " · cardio ✓" : ""}</small></span>
       <span class="v">${fmtVol(wVol(w))}<small class="mut">volume</small></span></a>`;
   }
   return html;
@@ -719,9 +725,9 @@ function vHistDetail(id) {
   const w = DB.workouts.find(x => x.id === id && !x.deleted); if (!w) return vNotFound();
   const exs = Object.keys(w.entries).filter(k => exOf(k));
   const c = w.cardio || {};
-  return `<header class="top"><button class="back" data-go="#/historique">${I.back}Historique</button><span class="chip">${esc(SES[w.session].nom)}</span></header>
+  return `<header class="top"><button class="back" data-go="#/historique">${I.back}Historique</button><span class="chip">${esc(sesOf(w.session).nom)}</span></header>
     <div class="eyebrow">${esc(fmtDay(w.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" }))}</div>
-    <h1 class="disp" style="font-size:40px;margin:6px 0 16px">${esc(SES[w.session].nom)}</h1>
+    <h1 class="disp" style="font-size:40px;margin:6px 0 16px">${esc(sesOf(w.session).nom)}</h1>
     <div class="kv"><div><b>${wSets(w)}</b><small>séries</small></div><div><b>${fmtVol(wVol(w))}</b><small>volume</small></div><div><b>${w.durationMin || "–"}</b><small>minutes</small></div></div>
     <div class="card">${exs.map(k => {
       const e = exOf(k), sets = w.entries[k].sets || [];
@@ -1004,7 +1010,7 @@ function aiContext() {
   L.push("Dernières séances (charge×répétitions des séries validées) :");
   for (const w of ws.slice(0, 8)) {
     const parts = Object.keys(w.entries).map(id => { const e = exOf(id); const d = doneSets(w, id); return e && d.length ? `${e.nom}: ${d.map(s => e.type === "time" ? num(s.reps) + "s" : `${fmtKg(num(s.kg) || 0)}×${num(s.reps)}`).join(", ")}${e.assist ? " (kg = aide)" : ""}` : null; }).filter(Boolean);
-    L.push(`- ${w.date} séance ${w.session}${w.durationMin ? " (" + w.durationMin + " min)" : ""} : ${parts.join(" | ")}${w.note ? " — note : " + w.note : ""}`);
+    L.push(`- ${w.date} ${sesOf(w.session).nom.toLowerCase()}${w.durationMin ? " (" + w.durationMin + " min)" : ""} : ${parts.join(" | ")}${w.note ? " — note : " + w.note : ""}`);
   }
   L.push("Par exercice (record · conseil de progression) :");
   for (const e of usedExercises()) { const p = prFor(e.id), ch = coach(e.id); L.push(`- ${e.nom} : record ${e.type === "time" ? p.r + " s" : fmtKg(p.k) + " kg × " + p.r}${ch ? " · " + ch.txt + (ch.stall ? " · STAGNATION" : "") : ""}`); }
@@ -1684,7 +1690,7 @@ function vSettings() {
     </div>
     <div class="sec-title"><h2 class="disp">Synchronisation</h2>${syncBadge(true)}</div>
     ${syncPanel()}
-    ${del.length ? `<div class="sec-title"><h2 class="disp">Corbeille</h2></div><div class="card" style="padding:4px 16px">${del.map(w => `<div class="pr"><span>${esc(SES[w.session].nom)} · ${esc(fmtShort(w.date))}</span><button class="chip" data-act="restore" data-id="${w.id}">Restaurer</button></div>`).join("")}</div>` : ""}
+    ${del.length ? `<div class="sec-title"><h2 class="disp">Corbeille</h2></div><div class="card" style="padding:4px 16px">${del.map(w => `<div class="pr"><span>${esc(sesOf(w.session).nom)} · ${esc(fmtShort(w.date))}</span><button class="chip" data-act="restore" data-id="${w.id}">Restaurer</button></div>`).join("")}</div>` : ""}
     <div class="sec-title"><h2 class="disp">Zone sensible</h2></div>
     <button class="btn ghost block" data-act="wipe">${I.trash}Tout effacer de ce navigateur</button>
     <div class="credits">
@@ -1708,7 +1714,7 @@ function mergeWorkouts(list) {
   let added = 0, updated = 0, skipped = 0;
   const fps = new Set(DB.workouts.map(fingerprint));
   for (const w0 of list) {
-    if (!w0 || !w0.id || !w0.entries || !SES[w0.session]) { skipped++; continue; }
+    if (!w0 || !w0.id || !w0.entries || !(SES[w0.session] || w0.session === "L")) { skipped++; continue; }
     const w = { ...w0 }; delete w.syncedAt; delete w._v;
     const i = DB.workouts.findIndex(x => x.id === w.id);
     if (i >= 0) { if ((w.updatedAt || "") > (DB.workouts[i].updatedAt || "")) { const keep = DB.workouts[i].syncedAt; DB.workouts[i] = w; w.syncedAt = keep; w.dirty = true; w._v = 1; updated++; } else skipped++; }
