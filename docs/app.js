@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.5.1";
+const APP_VERSION = "7.5.2";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -986,7 +986,7 @@ function aiChat() { try { return JSON.parse(localStorage.getItem("mpf.coach") ||
 function aiSaveChat(c) { try { localStorage.setItem("mpf.coach", JSON.stringify(c.slice(-30))); } catch (e) {} }
 let aiBusy = false;
 async function aiModels(force) {
-  try { const c = JSON.parse(localStorage.getItem("mpf.aimodel") || "null"); if (c && !force && Date.now() - c.at < 7 * 864e5) return c; } catch (e) {}
+  try { const c = JSON.parse(localStorage.getItem("mpf.aimodel") || "null"); if (c && c.all && !force && Date.now() - c.at < 864e5) return c; } catch (e) {}
   const r = await fetch(`${AI_API()}/models?pageSize=200`, { headers: { "x-goog-api-key": aiKey() } });
   if (!r.ok) { const e = new Error("AI " + r.status + " " + (await r.text().catch(() => "")).slice(0, 200)); e.status = r.status; throw e; }
   const j = await r.json();
@@ -1470,9 +1470,10 @@ const PHOTO_SCHEMA = { type: "OBJECT", properties: { aliments: { type: "ARRAY", 
 async function aiJson(contents, schema, maxTok = 1500) {
   if (!aiKey()) throw new Error("NO_KEY");
   if (!navigator.onLine) throw new Error("OFFLINE");
-  const m = await aiModels();
+  let m = await aiModels(); const tried = [];
   let last;
   for (const model of aiOrder(m)) {
+    tried.push(model);
     for (let att = 0, off = true; att < 4; att++) {
       const gc = { temperature: 0.2, maxOutputTokens: maxTok, responseMimeType: "application/json", responseSchema: schema }; if (off) gc.thinkingConfig = { thinkingBudget: 0 };
       const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 45000);
@@ -1484,12 +1485,14 @@ async function aiJson(contents, schema, maxTok = 1500) {
       } catch (e) {
         last = e.name === "AbortError" ? Object.assign(new Error("SLOW"), { slow: true }) : e;
         if (off && e.status === 400) { off = false; continue; }
-        if (aiOverload(e) && att < 2) { await aiWait(att ? 4000 : 1500); continue; } // surcharge : 2 nouveaux essais sur ce modèle
+        if (aiOverload(e) && att < 1) { await aiWait(1500); continue; } // surcharge : 1 nouvel essai sur ce modèle, puis modèle suivant
+        if (e.status === 404) { try { localStorage.removeItem("mpf.aimodel"); } catch (x) {} }
         break;
       } finally { clearTimeout(tm); }
     }
     if (last && !(last.status === 400 || last.status === 429 || last.slow || last.status === 404 || last.status >= 500 || last instanceof SyntaxError)) break;
   }
+  if (last) last.tried = tried;
   throw last || new Error("EMPTY");
 }
 async function analyzePhoto(dataUrl) {
@@ -1551,10 +1554,30 @@ function compDone() {
     markDirty(m); saveNow(); nu.comp = null; closeSheet(); render(true); toast("Repas mis à jour ✓");
   }
 }
-function photoSheet(state) {
+/* Analyse d'une photo avec relances automatiques si Google est saturé (503) : 3 relances espacées (20 s, 45 s, 90 s). */
+const PH_WAIT = [20, 45, 90];
+let phTimer = null;
+function photoRun(round = 0) {
+  const P = nu.photo; if (!P || !P.img) return; clearInterval(phTimer); P.round = round; P.err = null; photoSheet("loading");
+  const run = P.run = {};
+  (async () => {
+    try { const res = await analyzePhoto(P.img); if (P.run !== run || !$(".sheet-bg")) return; P.items = res.items; P.note = res.note; photoSheet(); }
+    catch (e) {
+      if (P.run !== run || !$(".sheet-bg")) return;
+      P.err = aiErr(e); P.tried = e.tried || null;
+      if ((aiOverload(e) || e.slow) && round < PH_WAIT.length) {
+        let left = PH_WAIT[round]; photoSheet("wait", left);
+        phTimer = setInterval(() => { if (P.run !== run || !$("#ph-left")) { clearInterval(phTimer); return; } left--; if (left <= 0) { clearInterval(phTimer); photoRun(round + 1); } else $("#ph-left").textContent = left; }, 1000);
+      } else photoSheet("error");
+    }
+  })();
+}
+function photoSheet(state, left) {
   const P = nu.photo;
-  if (state === "loading") return sheet(`<h2 class="disp">Analyse du plat</h2>${P && P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}<p class="typing">Le coach identifie les aliments et estime les portions…</p><div class="btns"><button class="btn ghost" data-close>Annuler</button></div>`);
-  if (state === "error") return sheet(`<h2 class="disp">Analyse impossible</h2><p>${esc(P.err)}</p><div class="btns">${!aiKey() ? `<a class="btn pri" href="#/coach" data-close>Activer ma clé Gemini (Coach)</a>` : P.img ? `<button class="btn pri" data-act="nu-pretry">Réessayer avec la même photo</button>` : ""}<button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`);
+  if (state === "loading") return sheet(`<h2 class="disp">Analyse du plat</h2>${P && P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}<p class="typing">${P && P.round ? `Nouvel essai (${P.round}/${PH_WAIT.length})…` : "Le coach identifie les aliments et estime les portions…"}</p><div class="btns"><button class="btn ghost" data-close>Annuler</button></div>`);
+  if (state === "wait") return sheet(`<h2 class="disp">Google est saturé</h2>${P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}<p>Les serveurs de Google sont débordés en ce moment (ce n'est pas ta clé). L'appli réessaie toute seule dans <b id="ph-left">${left}</b> s — garde cette fenêtre ouverte.</p>
+    <div class="btns"><button class="btn pri" data-act="nu-pretry">Réessayer maintenant</button><button class="btn sec" data-act="nu-pnew">Composer mon plat moi-même</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  if (state === "error") return sheet(`<h2 class="disp">Analyse impossible</h2><p>${esc(P.err)}</p><div class="btns">${!aiKey() ? `<a class="btn pri" href="#/coach" data-close>Activer ma clé Gemini (Coach)</a>` : P.img ? `<button class="btn pri" data-act="nu-pretry">Réessayer avec la même photo</button><button class="btn sec" data-act="nu-pnew">Composer mon plat moi-même</button>` : ""}<button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>${P.tried ? `<p class="dim" style="font-size:11px;margin:10px 0 0">Modèles essayés : ${esc(P.tried.join(", "))}</p>` : ""}`);
   const it = P.items;
   const tot = it.reduce((a, x) => ({ kcal: a.kcal + x.kcal, p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }), { kcal: 0, p: 0, c: 0, f: 0 });
   sheet(`<h2 class="disp">Ton assiette</h2>${P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}
@@ -2105,9 +2128,8 @@ function render(keepScroll) {
   const gal = $("#gal"); if (gal) gal.addEventListener("scroll", () => { const i = Math.round(gal.scrollLeft / gal.clientWidth); $$("#dots i").forEach((d, k) => d.classList.toggle("on", k === i)); }, { passive: true });
   const sel = $("#exsel"); if (sel) sel.onchange = () => { location.hash = "#/progres/" + sel.value; };
   const np = $("#nu-photo"); if (np) np.onchange = async () => { const f = np.files[0]; if (!f) return; nu.day = route().d || isoDay(); nu.slot = slotNow();
-    try { const img = await resizeImage(f); nu.photo = { img, items: [] }; photoSheet("loading");
-      const res = await analyzePhoto(img); if (!$(".sheet-bg")) return; nu.photo.items = res.items; nu.photo.note = res.note; photoSheet(); }
-    catch (e) { nu.photo = { ...(nu.photo || {}), err: aiErr(e) }; if ($(".sheet-bg") || true) photoSheet("error"); }
+    try { const img = await resizeImage(f); nu.photo = { img, items: [] }; photoRun(0); }
+    catch (e) { nu.photo = { ...(nu.photo || {}), err: aiErr(e) }; photoSheet("error"); }
     np.value = ""; };
   const nm = $("#nu-man"); if (nm) nm.onchange = () => { $("#nu-manbox").style.display = nm.checked ? "" : "none"; };
   const aw = $("#ai-w"); if (aw) aw.onchange = () => { DB.settings.aiShareWeight = aw.checked; saveNow(); };
@@ -2197,10 +2219,8 @@ function handleAct(ev) {
     case "nu-del": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; m.deleted = true; markDirty(m); saveNow(); closeSheet(); render(true);
       toast("Supprimé", () => { m.deleted = false; markDirty(m); saveNow(); render(true); }); break; }
     case "nu-pcomp": { nu.slot = $("#nu-slot") ? $("#nu-slot").value : nu.slot; const i = +el.dataset.i, x = nu.photo.items[i]; openComp({ name: x.name, ing: x.ing, back: "photo", idx: i, est: x }); break; }
-    case "nu-pretry": { const P = nu.photo; if (!P || !P.img) break; photoSheet("loading");
-      (async () => { try { const res = await analyzePhoto(P.img); if (!$(".sheet-bg")) return; P.items = res.items; P.note = res.note; P.err = null; photoSheet(); }
-        catch (e) { P.err = aiErr(e); if ($(".sheet-bg")) photoSheet("error"); } })(); break; }
-    case "nu-pnew": { if ($("#nu-slot")) nu.slot = $("#nu-slot").value; nu.photo = nu.photo || { items: [] }; openComp({ name: "", ing: [], back: "new" }); break; }
+    case "nu-pretry": { const P = nu.photo; if (!P || !P.img) break; photoRun(Math.min(P.round || 0, PH_WAIT.length - 1)); break; }
+    case "nu-pnew": { clearInterval(phTimer); if ($("#nu-slot")) nu.slot = $("#nu-slot").value; nu.photo = nu.photo || { items: [] }; nu.photo.run = null; nu.photo.items = nu.photo.items || []; openComp({ name: "", ing: [], back: "new" }); break; }
     case "nu-mcomp": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; openComp({ name: m.name, ing: m.ing, back: "meal", mealId: m.id, est: m }); break; }
     case "cp-pick": { const f = CIQ && CIQ.foods.find(x => String(x[0]) === el.dataset.code); if (!f) break; const c = nu.comp; c.name = $("#cp-name").value;
       c.ing.push({ name: f[1], g: 100, per100: { kcal: f[3], p: f[4], c: f[5], f: f[6] }, src: "ciqual", ref: f[0] }); c.q = ""; compSheet();
