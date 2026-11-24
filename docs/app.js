@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "7.5.0";
+const APP_VERSION = "7.5.1";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -997,8 +997,14 @@ async function aiModels(force) {
   const main = best(ok.filter(n => !/lite/.test(n))) || best(ok.slice());
   const lite = best(ok.filter(n => /lite/.test(n))) || main;
   if (!main) throw new Error("NO_MODEL");
-  const c = { main, lite, at: Date.now() }; try { localStorage.setItem("mpf.aimodel", JSON.stringify(c)); } catch (e) {} return c;
+  /* modèles de secours quand Google est surchargé (503) : les autres « flash » récents, du plus récent au plus ancien */
+  const all = [...new Set([main, ...ok.filter(n => !/lite/.test(n)).sort((a, b) => ver(b) - ver(a) || a.length - b.length), lite, ...ok.filter(n => /lite/.test(n)).sort((a, b) => ver(b) - ver(a) || a.length - b.length)])].filter(n => ver(n) >= 2).slice(0, 5);
+  const c = { main, lite, all, at: Date.now() }; try { localStorage.setItem("mpf.aimodel", JSON.stringify(c)); } catch (e) {} return c;
 }
+/* Google surchargé ou en panne passagère : on attend un peu et on réessaie, puis on passe à un autre modèle. */
+const aiOverload = e => !!e && (e.status === 500 || e.status === 502 || e.status === 503 || e.status === 504 || /UNAVAILABLE|overloaded|high demand/i.test(String(e.message)));
+const aiWait = ms => new Promise(ok => setTimeout(ok, ms));
+const aiOrder = (m, liteFirst) => { const base = liteFirst ? [m.lite, m.main] : [m.main, m.lite]; return [...new Set([...base, ...(m.all || [])].filter(Boolean))].slice(0, 4); };
 function aiContext() {
   const L = [];
   L.push(`Date du jour : ${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.`);
@@ -1070,14 +1076,14 @@ async function aiAsk(question, opts = {}) {
   const contents = [{ role: "user", parts: [{ text: "Voici mes données d'entraînement à jour :\n" + aiContext() }] }, { role: "model", parts: [{ text: "Bien reçu, j'ai tes données." }] }];
   for (const h of hist) contents.push({ role: h.r === "u" ? "user" : "model", parts: [{ text: h.t }] });
   contents.push({ role: "user", parts: [{ text: question }] });
-  const order = opts.brief ? [m.lite, m.main] : [m.main, m.lite];
   let last;
-  for (const model of [...new Set(order.filter(Boolean))]) {
-    for (const off of [true, false]) {
+  for (const model of aiOrder(m, opts.brief)) {
+    for (let att = 0, off = true; att < 3; att++) {
       try { return await aiStreamOnce(model, aiBody(contents, opts, off), opts.onText); }
       catch (e) {
         last = e;
-        if (off && e.status === 400) continue; // modèle qui refuse le réglage « réflexion » : on réessaie sans
+        if (off && e.status === 400) { off = false; continue; } // modèle qui refuse le réglage « réflexion » : on réessaie sans
+        if (aiOverload(e) && att < 1) { await aiWait(2000); continue; } // surcharge passagère : un nouvel essai
         if (e.status === 404) { m = await aiModels(true); }
         break; // 429 (quota), lenteur, 404… → modèle suivant
       }
@@ -1091,6 +1097,7 @@ function aiErr(e) {
   if (/NO_KEY/.test(m)) return "Ajoute d'abord ta clé Gemini.";
   if (/OFFLINE|Failed to fetch|Load failed|NetworkError/.test(m)) return "Pas de connexion : le coach IA a besoin d'Internet (les alertes, elles, marchent hors ligne).";
   if (/API key not valid|API_KEY_INVALID/.test(m) || / 400 /.test(m) && /key/i.test(m)) return "Clé Gemini invalide : vérifie-la dans Google AI Studio.";
+  if (/^AI 50[0234] /.test(m) || /UNAVAILABLE|overloaded|high demand/i.test(m)) return "Les serveurs de Google sont surchargés en ce moment (ce n'est pas ta clé). J'ai déjà réessayé avec plusieurs modèles : réessaie dans 1 à 2 minutes.";
   if (/ 429 /.test(m)) return "Quota gratuit du jour atteint. Réessaie demain (il se remet à zéro chaque nuit).";
   if (/ 403 /.test(m)) return "Accès refusé par Google (clé restreinte ou service non activé pour ce projet).";
   if (/NO_MODEL/.test(m)) return "Aucun modèle Gemini disponible avec cette clé.";
@@ -1465,8 +1472,8 @@ async function aiJson(contents, schema, maxTok = 1500) {
   if (!navigator.onLine) throw new Error("OFFLINE");
   const m = await aiModels();
   let last;
-  for (const model of [...new Set([m.main, m.lite].filter(Boolean))]) {
-    for (const off of [true, false]) {
+  for (const model of aiOrder(m)) {
+    for (let att = 0, off = true; att < 4; att++) {
       const gc = { temperature: 0.2, maxOutputTokens: maxTok, responseMimeType: "application/json", responseSchema: schema }; if (off) gc.thinkingConfig = { thinkingBudget: 0 };
       const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 45000);
       try {
@@ -1476,7 +1483,8 @@ async function aiJson(contents, schema, maxTok = 1500) {
         return JSON.parse(txt.replace(/^```(json)?|```$/g, "").trim());
       } catch (e) {
         last = e.name === "AbortError" ? Object.assign(new Error("SLOW"), { slow: true }) : e;
-        if (off && e.status === 400) continue;
+        if (off && e.status === 400) { off = false; continue; }
+        if (aiOverload(e) && att < 2) { await aiWait(att ? 4000 : 1500); continue; } // surcharge : 2 nouveaux essais sur ce modèle
         break;
       } finally { clearTimeout(tm); }
     }
@@ -1546,7 +1554,7 @@ function compDone() {
 function photoSheet(state) {
   const P = nu.photo;
   if (state === "loading") return sheet(`<h2 class="disp">Analyse du plat</h2>${P && P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}<p class="typing">Le coach identifie les aliments et estime les portions…</p><div class="btns"><button class="btn ghost" data-close>Annuler</button></div>`);
-  if (state === "error") return sheet(`<h2 class="disp">Analyse impossible</h2><p>${esc(P.err)}</p><div class="btns">${!aiKey() ? `<a class="btn pri" href="#/coach" data-close>Activer ma clé Gemini (Coach)</a>` : ""}<button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`);
+  if (state === "error") return sheet(`<h2 class="disp">Analyse impossible</h2><p>${esc(P.err)}</p><div class="btns">${!aiKey() ? `<a class="btn pri" href="#/coach" data-close>Activer ma clé Gemini (Coach)</a>` : P.img ? `<button class="btn pri" data-act="nu-pretry">Réessayer avec la même photo</button>` : ""}<button class="btn sec" data-act="nu-search">Rechercher les aliments</button><button class="btn ghost" data-close>Fermer</button></div>`);
   const it = P.items;
   const tot = it.reduce((a, x) => ({ kcal: a.kcal + x.kcal, p: a.p + x.p, c: a.c + x.c, f: a.f + x.f }), { kcal: 0, p: 0, c: 0, f: 0 });
   sheet(`<h2 class="disp">Ton assiette</h2>${P.img ? `<img src="${P.img}" alt="" class="photo-prev">` : ""}
@@ -2189,6 +2197,9 @@ function handleAct(ev) {
     case "nu-del": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; m.deleted = true; markDirty(m); saveNow(); closeSheet(); render(true);
       toast("Supprimé", () => { m.deleted = false; markDirty(m); saveNow(); render(true); }); break; }
     case "nu-pcomp": { nu.slot = $("#nu-slot") ? $("#nu-slot").value : nu.slot; const i = +el.dataset.i, x = nu.photo.items[i]; openComp({ name: x.name, ing: x.ing, back: "photo", idx: i, est: x }); break; }
+    case "nu-pretry": { const P = nu.photo; if (!P || !P.img) break; photoSheet("loading");
+      (async () => { try { const res = await analyzePhoto(P.img); if (!$(".sheet-bg")) return; P.items = res.items; P.note = res.note; P.err = null; photoSheet(); }
+        catch (e) { P.err = aiErr(e); if ($(".sheet-bg")) photoSheet("error"); } })(); break; }
     case "nu-pnew": { if ($("#nu-slot")) nu.slot = $("#nu-slot").value; nu.photo = nu.photo || { items: [] }; openComp({ name: "", ing: [], back: "new" }); break; }
     case "nu-mcomp": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; openComp({ name: m.name, ing: m.ing, back: "meal", mealId: m.id, est: m }); break; }
     case "cp-pick": { const f = CIQ && CIQ.foods.find(x => String(x[0]) === el.dataset.code); if (!f) break; const c = nu.comp; c.name = $("#cp-name").value;
