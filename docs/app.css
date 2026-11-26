@@ -787,3 +787,25 @@ canvas.rain{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;
   .recnum{animation:recIn .6s .15s cubic-bezier(.3,1.5,.5,1) both}
   @keyframes recIn{from{transform:scale(.6);opacity:0}}
 }
+
+/* ═══════════════ V8.2 · Mini-jeux ═══════════════ */
+.rig-reset{display:none}
+.rigbox canvas{touch-action:pan-y}
+.rigbar{display:none;align-items:center;gap:8px;padding:6px 16px 0}
+.rigbox.live .rigbar{display:flex}
+.rigstat{flex:1;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;min-width:0}
+.rigstat b{font:800 30px var(--cond);line-height:1;transition:color .2s}
+.rigstat b.over{color:#D52B2B}
+.rigstat b.ok{color:#2F8F5B}
+.rigstat span{font-size:15px;color:var(--mut)}
+.rigstat em{flex-basis:100%;font-style:normal;font-size:13px;color:var(--dim)}
+.rigbar .chip{height:36px}
+.weekwrap{background:var(--s1);border-radius:16px;padding:12px 14px 10px;margin-bottom:8px}
+.weekbar{display:block;width:100%;height:auto}
+.weekwrap p{margin:6px 0 0;font-size:14px;color:var(--mut)}
+@media (prefers-reduced-motion:no-preference){
+  #view.enter .wp{animation:wpIn .5s cubic-bezier(.3,1.4,.5,1) both}
+  @keyframes wpIn{from{transform:translateX(220px);opacity:0}}
+  .quick .q[data-act=water]:active svg .w{animation:fill .35s ease-out}
+}
+.nprompt .btns{display:flex;flex-direction:row;gap:8px}

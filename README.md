@@ -55,10 +55,17 @@ Adresse de l'appli : **https://adjaoudicherif86-glitch.github.io/mon-programme-f
 5. **Branch** : choisis `main`, puis le dossier **`/docs`**, puis **Save**.
 6. Attends 1 à 3 minutes, recharge la page **Settings → Pages** : un cadre affiche « Your site is live at… ». Clique sur le lien.
 
+## Nouveautés V8.2
+
+- Accueil : mini-jeux à la place de la barre physique (qui buguait au doigt, surtout avec les haltères), moteur maison sans dépendance :
+  - « Charge ta barre » : glisser les disques du râtelier jusqu'à la charge du jour, chrono et record ;
+  - « Place la goupille » pour les machines à pile ;
+  - « Fais tes reps » pour les haltères.
+- Accueil : la barre de la semaine (un disque chargé par séance terminée).
+
 ## Nouveautés V8.1
 
 - Couleur par onglet, prise sur les disques : Accueil bleu, Programme rouge, Progrès jaune, Nutrition vert. L'orange reste pour la séance en cours et les records.
-- Accueil : la barre se joue au doigt. On tire un disque, on le lance, il tombe et rebondit ; un appui bref le fait sauter (moteur physique Matter.js, licence MIT).
 - Accueil : actions rapides (photo du repas, pesée avec boutons + et −, verre d'eau).
 - Nutrition : « Tes habituels » (un appui ajoute un repas déjà noté plusieurs fois), suivi de l'eau, objectifs repliés.
 - Progrès : « Le mois en chiffres ».

@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "8.1.0";
+const APP_VERSION = "8.2.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -262,7 +262,7 @@ const plateTxt = l => l.map(w => fmtKg(w)).join(", ");
 function plateRig(e, kg, big) {
   const kind = gearKind(e); if (!kind || !(kg > 0)) return "";
   const W = big ? 390 : 132, H = big ? 168 : 40, cy = H / 2;
-  let s = `<svg class="${big ? "rig" : ""}" width="${big ? "" : W}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(gearLabel(e, kg))}">`;
+  let s = `<svg class="${big ? "rig" : ""}" ${big ? "" : `width="${W}"`} viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(gearLabel(e, kg))}">`;
   if (kind === "plates") {
     const { list } = platesFor(kg, barOf(e));
     const bw = big ? 12 : 4, pw = big ? 28 : 9, gap = big ? 3 : 1.5;
@@ -353,120 +353,166 @@ function plateRain() {
   requestAnimationFrame(draw);
 }
 
-/* ───────────── V8.1 · La barre de l'accueil ─────────────
-   Les disques (ou haltères, ou la pile) se prennent au doigt : on les tire, on les lance, ils tombent
-   et rebondissent. Un appui bref fait sauter un disque de la barre. Moteur : Matter.js (MIT), chargé à la demande. */
+/* ───────────── V8.2 · La barre de l'accueil ───────────── */
 let rigWorld = null;
-async function mountRig() {
-  const box = $("#rigbox"); if (!box) { if (rigWorld) rigWorld.stop(); return; }
-  if (rigWorld && rigWorld.box === box) return;
-  if (rigWorld) rigWorld.stop();
-  try { if (!window.Matter) await loadScript("vendor/matter-0.20.0.min.js"); } catch (e) { return; }
-  if (!box.isConnected) return;
-  const M = window.Matter, { Engine, Bodies, Body, Composite, Constraint, Query, Events } = M;
+/* Mini-jeux de l'accueil (V8.2), moteur maison sans dépendance :
+   - disques : « Charge ta barre » — glisse les disques du râtelier sur la barre (les deux côtés se chargent
+     ensemble) pour atteindre la charge du jour, le plus vite possible. Touche un disque chargé pour l'enlever.
+   - pile de poids : « Place la goupille » — fais glisser la goupille orange sur la bonne plaque.
+   - haltères : « Fais tes reps » — touche les haltères pour enchaîner les répétitions.
+   L'état du jeu survit aux rafraîchissements de l'écran (forme du jour, eau…). */
+const RG = { key: "" };
+const rigBest = () => { try { return JSON.parse(localStorage.getItem("mpf.rigbest") || "{}"); } catch (e) { return {}; } };
+function mountRig() {
+  const box = $("#rigbox");
+  if (rigWorld && (!box || rigWorld.box !== box)) { rigWorld.stop(); rigWorld = null; }
+  if (!box || rigWorld) return;
   const e = exOf(box.dataset.ex), kg = +box.dataset.kg, kind = gearKind(e); if (!e || !kind) return;
-  const cv = $("canvas", box), dpr = Math.min(2, devicePixelRatio || 1);
-  const W = box.clientWidth, H = 232; cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+  const key = `${e.id}|${kg}|${isoDay()}`;
+  if (RG.key !== key) Object.assign(RG, { key, kind, loaded: [], pin: 0, reps: 0, t0: 0, done: false, time: 0, auto: false });
+  const cv = $("canvas", box), stat = $(".rigstat", box), dpr = Math.min(2, devicePixelRatio || 1);
+  const W = box.clientWidth, H = kind === "plates" ? 262 : 236; cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
   const g = cv.getContext("2d"); g.scale(dpr, dpr);
-  const eng = Engine.create({ enableSleeping: true }); eng.gravity.y = 1.15;
-  const wall = { isStatic: true, render: { hide: true } };
-  Composite.add(eng.world, [Bodies.rectangle(W / 2, H + 30, W * 3, 60, wall), Bodies.rectangle(-30, H / 2 - 300, 60, H + 800, wall), Bodies.rectangle(W + 30, H / 2 - 300, 60, H + 800, wall), Bodies.rectangle(W / 2, -560, W * 3, 60, wall)]);
-  const items = [], draws = [];
-  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
-  if (kind === "plates") {
-    const { list } = platesFor(kg, barOf(e)); const cy = H - 84, bw = 12;
-    const bar = Bodies.rectangle(W / 2, cy, W + 40, bw, { isStatic: true, label: "bar" }); Composite.add(eng.world, bar);
-    draws.push(() => { g.fillStyle = "#9AA0A4"; g.fillRect(0, cy - bw / 2, W, bw); g.fillStyle = "#BCC1C4"; g.fillRect(0, cy - bw / 2, W, 3); g.fillStyle = "#5E646A"; rr(W * .34 - 16, cy - 15, 14, 30, 2); g.fill(); });
-    let x = W * .34;
-    list.forEach((w, i) => {
-      const [, c, t, f] = PLATES.find(p => p[0] === w); const ph = 164 * f, ww = w >= 10 ? 28 : 18;
-      const b = Bodies.rectangle(x + ww / 2, cy, ww, ph, { chamfer: { radius: 5 }, friction: .6, frictionAir: .012, restitution: .28, density: .002 * (w / 10 + .5), label: "plate" });
-      b.plugin = { c, t, w: ww, h: ph, txt: w >= 10 ? fmtKg(w) : "", home: { x: x + ww / 2, y: cy }, delay: i * 70 };
-      Body.setStatic(b, true); items.push(b); x += ww + 3;
-    });
-    const col = Bodies.rectangle(x + 7, cy, 12, 34, { isStatic: true, chamfer: { radius: 2 }, label: "collar" }); Composite.add(eng.world, col);
-    draws.push(() => { g.fillStyle = "#23272B"; rr(col.position.x - 6, cy - 17, 12, 34, 2); g.fill(); });
-  } else if (kind === "db") {
-    const sc = Math.min(1, .55 + kg / 60);
-    for (let k = 0; k < 2; k++) {
-      const hw = 40 * sc, hh = 62 * sc, hl = 104, cx = W / 2 + (k ? 70 : -70), y = H - hh / 2 - 2 - (k ? 0 : 0);
-      const L = Bodies.rectangle(cx - hl / 2 - hw / 2, y, hw, hh, { chamfer: { radius: 9 } }), R = Bodies.rectangle(cx + hl / 2 + hw / 2, y, hw, hh, { chamfer: { radius: 9 } }), Hd = Bodies.rectangle(cx, y, hl, 11, { chamfer: { radius: 3 } });
-      const b = Body.create({ parts: [Hd, L, R], friction: .5, restitution: .3, frictionAir: .01, label: "db" });
-      Body.scale(b, .62, .62); Body.setPosition(b, { x: W / 2 + (k ? 86 : -86), y: H - 30 - k * 0 });
-      b.plugin = { db: true, kg: fmtKg(kg) }; items.push(b);
-    }
-  } else {
-    const n = 12, on = Math.max(1, Math.min(n, Math.round(kg / 5))), bh = 13, bw = 132;
-    draws.push(() => { g.fillStyle = "#9AA0A4"; g.fillRect(W / 2 - 3, 0, 6, H); });
-    for (let i = 0; i < n; i++) {
-      const b = Bodies.rectangle(W / 2, H - 2 - bh / 2 - (n - 1 - i) * (bh + 1.5), bw, bh, { chamfer: { radius: 3 }, friction: .7, restitution: .15, frictionAir: .01, label: "brick" });
-      b.plugin = { c: i < n - on ? "#C9CDCB" : "#3A4046", pin: i === n - on, w: bw, h: bh }; items.push(b);
-    }
-  }
-  Composite.add(eng.world, items);
-  const reset = $(".rig-reset", box);
-  let drag = null, raf = 0, still = 0, entered = !!calm() || kind !== "plates", tEnter = performance.now(), lastBuzz = 0, touched = false;
-  Events.on(eng, "collisionStart", ev => { const now = performance.now(); if (now - lastBuzz < 90) return;
-    for (const p of ev.pairs) { const v = Math.hypot(p.bodyA.velocity.x - p.bodyB.velocity.x, p.bodyA.velocity.y - p.bodyB.velocity.y); if (v > 6) { buzz(Math.min(25, v * 1.5)); lastBuzz = now; break; } } });
-  const paint = () => {
-    g.clearRect(0, 0, W, H); for (const d of draws) d();
-    for (const b of items) {
-      const P = b.plugin;
-      if (P.db) {
-        for (const [i, part] of b.parts.slice(1).entries()) { const v = part.vertices; g.beginPath(); g.moveTo(v[0].x, v[0].y); for (const q of v.slice(1)) g.lineTo(q.x, q.y); g.closePath(); g.fillStyle = i === 0 ? "#9AA0A4" : "#3A4046"; g.fill(); }
-        const hp = b.parts.slice(2).map(x => x.position);
-        g.fillStyle = "#E3E5E2"; g.font = "800 12px 'Barlow Condensed', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
-        for (const q of hp) { g.save(); g.translate(q.x, q.y); g.rotate(b.angle); g.fillText(P.kg, 0, 1); g.restore(); }
-        continue;
-      }
-      g.save(); g.translate(b.position.x, b.position.y); g.rotate(b.angle);
-      rr(-P.w / 2, -P.h / 2, P.w, P.h, P.h > 30 ? 6 : 3); g.fillStyle = P.c; g.fill();
-      if (P.c === "#F7F7F4") { g.lineWidth = 1.5; g.strokeStyle = "#23272B"; g.stroke(); }
-      if (P.txt) { g.rotate(-Math.PI / 2); g.fillStyle = P.t; g.font = "800 13px 'Barlow Condensed', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(P.txt, 0, 1); }
-      g.restore();
-      if (P.pin) { g.save(); g.translate(b.position.x, b.position.y); g.rotate(b.angle); g.fillStyle = "#FF4D00"; g.fillRect(P.w / 2, -3, 24, 6); g.beginPath(); g.arc(P.w / 2 + 28, 0, 6, 0, 7); g.fill(); g.restore(); }
-    }
+  const FONT = w => `800 ${w}px 'Barlow Condensed', sans-serif`;
+  const rr = (x, y, w, h, r) => { r = Math.min(r, w / 2, h / 2); g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  const PL = w => PLATES.find(p => p[0] === w);
+  let raf = 0, drag = null, fx = { lift: 0, liftV: 0, shake: 0 }, flying = [], msg = "", msgT = 0;
+  const bar = barOf(e), target = kg;
+  /* ── géométrie : disques ── */
+  const by = 96, cL = W / 2 - 64, cR = W / 2 + 64, rackY = H - 32;
+  const pw = w => w >= 10 ? 22 : w >= 5 ? 15 : 11, ph = w => 156 * PL(w)[3];
+  const rack = PLATES.map(([w], i) => ({ w, x: 26 + i * ((W - 52) / (PLATES.length - 1)), y: rackY, r: w >= 10 ? 21 : w >= 5 ? 17 : 14 }));
+  const sideSum = () => RG.loaded.reduce((a, w) => a + w, 0);
+  const total = () => kind === "plates" ? bar + 2 * sideSum() : kind === "stack" ? (RG.pin + 1) * 5 : RG.reps;
+  const slots = () => { let xr = cR + 3, out = []; for (const w of RG.loaded) { out.push({ w, xr, xl: W - xr - pw(w) }); xr += pw(w) + 2; } return out; };
+  // sprites des disques chargés : position animée vers la cible
+  let spr = [];
+  const syncSpr = (fromX, fromY) => { const S = slots(); spr = S.map((s, i) => { const o = spr[i]; return o && o.w === s.w ? Object.assign(o, { txr: s.xr, txl: s.xl }) : { w: s.w, xr: fromX ?? s.xr + 60, xl: fromX != null ? W - fromX : s.xl - 60, y: fromY ?? by, txr: s.xr, txl: s.xl }; }); };
+  syncSpr(); for (const s of spr) { s.xr = s.txr; s.xl = s.txl; s.y = by; }
+  /* ── géométrie : pile ── */
+  const n = Math.max(12, Math.round(target / 5) + 2), bh = Math.min(13, (H - 30) / n - 3), sx = W / 2 - 62, sw = 124;
+  const brickY = i => 14 + i * (bh + 3);
+  const want = Math.max(0, Math.round(target / 5) - 1);
+  let pinY = brickY(RG.pin) + bh / 2, lift = 0;
+  /* ── haltères ── */
+  const repGoal = (e.reps && e.reps[0]) || 10; let dbA = [0, 0];
+
+  const say = (t, ms = 1800) => { msg = t; msgT = performance.now() + ms; };
+  const fmtT = ms => (ms / 1000).toFixed(1).replace(".", ",") + " s";
+  const updStat = () => {
+    const tot = total(); let h;
+    if (kind === "plates") h = `<b class="${tot > target + 1e-9 ? "over" : RG.done ? "ok" : ""}">${fmtKg(tot)}</b><span>/ ${fmtKg(target)} kg</span>`;
+    else if (kind === "stack") h = `<b class="${RG.done ? "ok" : ""}">${fmtKg(tot)}</b><span>/ ${fmtKg(target)} kg</span>`;
+    else h = `<b class="${RG.done ? "ok" : ""}">${tot}</b><span>/ ${repGoal} reps</span>`;
+    const best = rigBest()[kind + target];
+    h += `<em>${RG.done ? (RG.auto ? "Solution affichée" : RG.time < 300 ? "Bien vu" : `En ${fmtT(RG.time)}${RG.rec ? ", nouveau record" : best && best < RG.time - 50 ? `, record ${fmtT(best)}` : ""}`) : RG.t0 ? "Chrono lancé" : best ? `Record ${fmtT(best)}` : kind === "plates" ? "Charge ta barre" : kind === "stack" ? "Place la goupille" : "Fais tes reps"}</em>`;
+    stat.innerHTML = h;
   };
-  const loop = now => {
-    raf = 0; if (!box.isConnected) return stop();
-    if (!entered) { // les disques glissent sur la barre, un par un
-      let all = true;
-      for (const b of items) { const P = b.plugin, k = Math.min(1, Math.max(0, (now - tEnter - P.delay) / 520)), e3 = 1 - Math.pow(1 - k, 3); Body.setPosition(b, { x: P.home.x + (1 - e3) * (W - P.home.x + 40), y: P.home.y }); if (k < 1) all = false; }
-      if (all) { entered = true; buzz(8); }
-    } else Engine.update(eng, 1000 / 60);
-    paint();
-    const moving = drag || !entered || items.some(b => !b.isStatic && !b.isSleeping && b.speed > .05);
-    still = moving ? 0 : still + 1;
-    if (still < 30) raf = requestAnimationFrame(loop);
+  const start = () => { if (!RG.t0 && !RG.done) RG.t0 = performance.now(); };
+  const win = () => {
+    if (RG.done) return; RG.done = true; RG.time = RG.t0 ? performance.now() - RG.t0 : 0; RG.rec = false;
+    if (!RG.auto && RG.time >= 300) { const B = rigBest(), k = kind + target; const had = B[k]; if (!had || RG.time < had) { B[k] = Math.round(RG.time); RG.rec = !!had; try { localStorage.setItem("mpf.rigbest", JSON.stringify(B)); } catch (x) {} } }
+    fx.liftV = -7; buzz([20, 40, 60]); if (!RG.auto) plateRain(); say(kind === "db" ? "Série faite !" : kind === "stack" ? "Goupille en place !" : "Barre prête !", 2200); updStat();
   };
-  const wake = () => { still = 0; if (!raf) raf = requestAnimationFrame(loop); };
-  const pt = ev => { const r = cv.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
-  const hit = p => Query.point(items, p)[0] || items.find(b => b.plugin && b.plugin.db && Query.point(b.parts.slice(1), p).length);
-  const onTouch = ev => { const t = ev.touches[0]; if (!t) return; if (hit(pt(t))) ev.preventDefault(); };
-  cv.addEventListener("touchstart", onTouch, { passive: false });
-  cv.addEventListener("pointerdown", ev => {
-    const p = pt(ev), b = hit(p); if (!b || !entered) return;
-    ev.preventDefault(); try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
-    const wasStatic = b.isStatic; if (wasStatic) Body.setStatic(b, false);
-    Body.set(b, "isSleeping", false); for (const o of items) if (o.isSleeping) M.Sleeping.set(o, false);
-    const off = { x: p.x - b.position.x, y: p.y - b.position.y }, ca = Math.cos(-b.angle), sa = Math.sin(-b.angle);
-    const c = Constraint.create({ pointA: { ...p }, bodyB: b, pointB: { x: off.x * ca - off.y * sa, y: off.x * sa + off.y * ca }, stiffness: .18, damping: .08, length: 0 });
-    Composite.add(eng.world, c); drag = { b, c, p0: p, t0: performance.now(), wasStatic, id: ev.pointerId };
-    cv.classList.add("grab"); if (!touched) { touched = true; reset.hidden = false; } buzz(6); wake();
-  });
-  cv.addEventListener("pointermove", ev => { if (!drag || ev.pointerId !== drag.id) return; const p = pt(ev); drag.c.pointA.x = p.x; drag.c.pointA.y = p.y; wake(); });
-  const end = ev => {
-    if (!drag || (ev && ev.pointerId !== drag.id)) return;
-    Composite.remove(eng.world, drag.c); const d = drag; drag = null; cv.classList.remove("grab");
-    const p = ev ? pt(ev) : d.p0;
-    if (d.wasStatic && Math.hypot(p.x - d.p0.x, p.y - d.p0.y) < 8 && performance.now() - d.t0 < 280) Body.setVelocity(d.b, { x: 4 + Math.random() * 3, y: -9 - Math.random() * 3 });
+  const check = () => { const t = total();
+    if (kind === "plates") { if (Math.abs(t - target) < 1e-9) win(); else if (t > target) { fx.shake = 1; buzz([30, 30, 30]); say(`Trop lourd de ${fmtKg(t - target)} kg, touche un disque pour l'enlever`, 2600); } }
+    if (kind === "stack") { if (RG.pin === want) win(); else { fx.shake = 1; buzz(30); say(RG.pin < want ? "Trop léger, descends la goupille" : "Trop lourd, remonte la goupille"); } }
+    updStat(); };
+  const addPlate = (w, fromX, fromY) => {
+    const used = slots().reduce((a, s) => a + pw(s.w) + 2, 0);
+    if (cR + 3 + used + pw(w) > W - 4) { say("Plus de place sur la barre"); buzz(30); return false; }
+    RG.loaded.push(w); syncSpr(fromX, fromY); buzz(10); check(); return true;
+  };
+  const removeOuter = () => { const w = RG.loaded.pop(); if (w == null) return; const s = spr.pop();
+    flying.push({ w, x: s.xr, y: s.y, vx: 3 + Math.random() * 2, vy: -6, a: 0, va: .12 }, { w, x: s.xl, y: s.y, vx: -3 - Math.random() * 2, vy: -6, a: 0, va: -.12 });
+    if (RG.done) { RG.done = false; RG.t0 = 0; RG.auto = false; } buzz(8); updStat(); };
+  // boutons
+  box.querySelector("[data-rg=reset]").onclick = () => { for (const w of RG.loaded.slice()) removeOuter(); Object.assign(RG, { pin: 0, reps: 0, t0: 0, done: false, auto: false }); dbA = [0, 0]; updStat(); wake(); };
+  box.querySelector("[data-rg=solve]").onclick = () => {
+    Object.assign(RG, { t0: 0, done: false, auto: true });
+    if (kind === "plates") { while (RG.loaded.length) removeOuter(); const L = platesFor(target, bar).list; L.forEach((w, i) => setTimeout(() => { if (rigWorld && rigWorld.box === box) { addPlate(w, W + 30, by); wake(); } }, 180 * i + 250)); }
+    else if (kind === "stack") { RG.pin = want; check(); }
+    else { RG.reps = repGoal; win(); }
     wake();
   };
-  cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end); cv.addEventListener("lostpointercapture", end);
-  reset.onclick = () => { rigWorld && rigWorld.stop(); rigWorld = null; reset.hidden = true; box.classList.remove("live"); mountRig(); };
-  function stop() { cancelAnimationFrame(raf); raf = 0; Engine.clear(eng); cv.removeEventListener("touchstart", onTouch); if (rigWorld && rigWorld.eng === eng) rigWorld = null; }
-  rigWorld = { box, eng, stop };
-  box.classList.add("live"); wake();
+  /* ── dessin ── */
+  const plateSide = (x, y, w, alpha = 1) => { const [, c, t] = PL(w), wd = pw(w), h = ph(w); g.globalAlpha = alpha; rr(x, y - h / 2, wd, h, 5); g.fillStyle = c; g.fill(); if (w === 5) { g.lineWidth = 1.5; g.strokeStyle = "#23272B"; g.stroke(); }
+    if (w >= 10) { g.save(); g.translate(x + wd / 2, y); g.rotate(-Math.PI / 2); g.fillStyle = t; g.font = FONT(12); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(fmtKg(w), 0, 1); g.restore(); } g.globalAlpha = 1; };
+  const plateFace = (x, y, r, w, lifted) => { const [, c, t] = PL(w); g.save(); if (lifted) { g.shadowColor = "rgba(35,39,43,.35)"; g.shadowBlur = 14; g.shadowOffsetY = 6; }
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = c; g.fill(); g.shadowColor = "transparent"; if (w === 5) { g.lineWidth = 1.5; g.strokeStyle = "#23272B"; g.stroke(); }
+    g.beginPath(); g.arc(x, y, r * .22, 0, 7); g.fillStyle = "#E3E5E2"; g.fill(); g.fillStyle = t; g.font = FONT(r > 18 ? 12 : 10); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(fmtKg(w), x, y - r * .55 + 2); g.restore(); };
+  const draw = now => {
+    g.clearRect(0, 0, W, H);
+    // effets communs : petit saut de la barre réussie, tremblement si erreur
+    fx.liftV += .9; fx.lift += fx.liftV; if (fx.lift > 0) { fx.lift = 0; fx.liftV = Math.abs(fx.liftV) > 2 ? -fx.liftV * .35 : 0; }
+    const sh = fx.shake > 0 ? Math.sin(now / 22) * 6 * fx.shake : 0; fx.shake = Math.max(0, fx.shake - .05);
+    g.save(); g.translate(sh, fx.lift);
+    if (kind === "plates") {
+      g.fillStyle = "#9AA0A4"; g.fillRect(0, by - 6, W, 12); g.fillStyle = "#BCC1C4"; g.fillRect(0, by - 6, W, 3);
+      g.fillStyle = "#23272B"; rr(cL - 12, by - 17, 12, 34, 2); g.fill(); rr(cR, by - 17, 12, 34, 2); g.fill();
+      g.fillStyle = "#5E646A"; g.fillRect(cL, by - 4, cR - cL, 8);
+      for (const s of spr) { s.xr += (s.txr - s.xr) * .28; s.xl += (s.txl - s.xl) * .28; s.y += (by - s.y) * .28; plateSide(s.xr + 12, s.y, s.w); plateSide(s.xl - 12, s.y, s.w); }
+    } else if (kind === "stack") {
+      g.fillStyle = "#9AA0A4"; g.fillRect(W / 2 - 3, 0, 6, H);
+      lift += ((RG.done ? -22 : 0) - lift) * .18;
+      for (let i = 0; i < n; i++) { const up = i <= RG.pin && RG.done ? lift : 0, y = brickY(i) + up;
+        rr(sx, y, sw, bh, 3); g.fillStyle = i === want && !RG.done ? "#3A4046" : "#3A4046"; g.fill();
+        g.fillStyle = "#9AA0A4"; g.font = FONT(11); g.textAlign = "right"; g.textBaseline = "middle"; g.fillText(String((i + 1) * 5), sx - 8, y + bh / 2 + 1); }
+      const ty = drag ? drag.y : brickY(RG.pin) + bh / 2; pinY += (ty - pinY) * (drag ? 1 : .3);
+      const py = pinY + (RG.done ? lift : 0);
+      g.fillStyle = "#FF4D00"; g.fillRect(sx + sw - 4, py - 3, 34, 6); g.beginPath(); g.arc(sx + sw + 34, py, 9, 0, 7); g.fill();
+      g.fillStyle = "#23272B"; g.beginPath(); g.arc(sx + sw + 34, py, 3, 0, 7); g.fill();
+    } else {
+      const sc = Math.min(1, .6 + kg / 60);
+      for (let k = 0; k < 2; k++) { dbA[k] *= .82; const cx = W / 2 + (k ? 78 : -78), cy = H - 60 - dbA[k] * 70, ang = dbA[k] * (k ? -.9 : .9);
+        g.save(); g.translate(cx, cy); g.rotate(ang); const hw = 30 * sc, hh = 52 * sc, hl = 70;
+        g.fillStyle = "#9AA0A4"; rr(-hl / 2, -5, hl, 10, 3); g.fill(); g.fillStyle = "#3A4046"; rr(-hl / 2 - hw, -hh / 2, hw, hh, 8); g.fill(); rr(hl / 2, -hh / 2, hw, hh, 8); g.fill();
+        g.fillStyle = "#E3E5E2"; g.font = FONT(12); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(fmtKg(kg), -hl / 2 - hw / 2, 1); g.fillText(fmtKg(kg), hl / 2 + hw / 2, 1); g.restore(); }
+    }
+    g.restore();
+    if (kind === "plates") {
+      // disques qui tombent
+      for (const f of flying) { f.vy += .7; f.x += f.vx; f.y += f.vy; f.a += f.va; g.save(); g.translate(f.x, f.y); g.rotate(f.a); plateSide(-pw(f.w) / 2, 0, f.w, .9); g.restore(); }
+      flying = flying.filter(f => f.y < H + 120);
+      // râtelier
+      g.fillStyle = "#C9CDCB"; rr(8, rackY + 6, W - 16, 22, 11); g.fill();
+      for (const r of rack) { const d = drag && drag.r === r; if (!d) plateFace(r.x, r.y, r.r, r.w); }
+      if (drag && drag.r) plateFace(drag.x, drag.y, drag.r.r * 1.15, drag.r.w, true);
+    }
+    if (msg && now < msgT) { g.font = "600 14px Barlow, sans-serif"; const tw = g.measureText(msg).width + 24; const mx = Math.max(8, Math.min(W - tw - 8, W / 2 - tw / 2));
+      g.fillStyle = "rgba(35,39,43,.92)"; rr(mx, 6, tw, 30, 15); g.fill(); g.fillStyle = "#E3E5E2"; g.textAlign = "left"; g.textBaseline = "middle"; g.fillText(msg, mx + 12, 22); }
+  };
+  const busy = () => drag || flying.length || Math.abs(fx.lift) > .3 || fx.liftV || fx.shake > 0 || spr.some(s => Math.abs(s.txr - s.xr) > .4 || Math.abs(by - s.y) > .4) || (kind === "stack" && Math.abs(brickY(RG.pin) + bh / 2 - pinY) > .4) || (kind === "stack" && RG.done && Math.abs(lift + 22) > .4) || dbA.some(a => a > .01) || (msg && performance.now() < msgT + 50);
+  const loop = now => { raf = 0; if (!box.isConnected) return stop(); draw(now); if (busy()) raf = requestAnimationFrame(loop); };
+  const wake = () => { if (!raf) raf = requestAnimationFrame(loop); };
+  /* ── doigt ── */
+  const pt = ev => { const r = cv.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
+  const hitWhat = p => {
+    if (kind === "plates") { const r = rack.find(r => Math.hypot(p.x - r.x, p.y - r.y) < r.r + 8); if (r) return { r };
+      if (RG.loaded.length && p.y > by - 85 && p.y < by + 85 && (p.x > cR || p.x < cL)) return { off: true }; return null; }
+    if (kind === "stack") { if (p.x > sx - 30 && p.x < sx + sw + 50 && p.y < brickY(n - 1) + bh + 6) return { pin: true }; return null; }
+    const k = p.x < W / 2 ? 0 : 1; return p.y > H - 140 ? { db: k } : null;
+  };
+  const onTouch = ev => { const t = ev.touches[0]; if (t && hitWhat(pt(t))) ev.preventDefault(); };
+  cv.addEventListener("touchstart", onTouch, { passive: false });
+  cv.onpointerdown = ev => {
+    const p = pt(ev), h = hitWhat(p); if (!h) return; ev.preventDefault(); try { cv.setPointerCapture(ev.pointerId); } catch (x) {}
+    if (RG.done && !h.off && kind !== "db") return;
+    if (h.r) { start(); drag = { ...h, x: p.x, y: p.y, x0: p.x, y0: p.y, t0: performance.now(), id: ev.pointerId }; buzz(5); }
+    else if (h.off) { removeOuter(); }
+    else if (h.pin) { start(); drag = { pin: true, y: p.y, id: ev.pointerId }; }
+    else if (h.db != null) { if (RG.done) { RG.reps = 0; RG.done = false; RG.t0 = 0; } start(); dbA[h.db] = 1; RG.reps++; buzz(12); if (RG.reps >= repGoal) win(); else { if (RG.reps === Math.ceil(repGoal / 2)) say("La moitié, continue"); updStat(); } }
+    wake();
+  };
+  cv.onpointermove = ev => { if (!drag || ev.pointerId !== drag.id) return; const p = pt(ev); drag.x = p.x; drag.y = drag.pin ? Math.max(brickY(0), Math.min(brickY(n - 1) + bh, p.y)) : p.y; wake(); };
+  const end = ev => { if (!drag || (ev && ev.pointerId !== drag.id)) return; const d = drag; drag = null;
+    if (d.r) { const tap = Math.hypot(d.x - d.x0, d.y - d.y0) < 10; if (tap || d.y < rackY - 40) addPlate(d.r.w, tap ? W + 30 : d.x, tap ? by : d.y); }
+    if (d.pin) { RG.pin = Math.max(0, Math.min(n - 1, Math.round((d.y - 14 - bh / 2) / (bh + 3)))); buzz(8); check(); }
+    wake(); };
+  cv.onpointerup = end; cv.onpointercancel = end; cv.onlostpointercapture = end;
+  function stop() { cancelAnimationFrame(raf); raf = 0; cv.removeEventListener("touchstart", onTouch); }
+  rigWorld = { box, stop };
+  box.classList.add("live"); updStat(); wake();
 }
 
 /* ───────────── V8.1 · Eau ───────────── */
@@ -644,7 +690,7 @@ function vHome() {
       <a class="btn ghost sm block" style="margin-top:10px" href="#/historique/${last.id}">Voir la séance du ${esc(fmtShort(last.date))}</a>`;
   }
   const allEx = [...exs, ...((DB.settings.extras || {})[s] || []).map(d => exOf(d.id)).filter(Boolean)];
-  const lead = allEx.find(e => gearKind(e) && todayKg(e) > 0);
+  const lead = ["plates", "stack", "db"].map(k => allEx.find(e => gearKind(e) === k && todayKg(e) > 0)).find(Boolean);
   const leadKg = lead ? todayKg(lead) : null;
   const others = allEx.filter(e => e !== lead);
   const fv = formeToday(), fset = DB.settings.forme && DB.settings.forme.d === isoDay();
@@ -656,8 +702,9 @@ function vHome() {
   <section class="hero tonight">
     <h1>${evening ? "Ce soir" : "Aujourd'hui"},<br>séance ${s}</h1>
     <p>${esc(S.focus.replace(/ · /g, ", "))}. ${allEx.length} exercices, environ 55 minutes.</p>
-    ${lead ? `<div class="rigbox" id="rigbox" data-ex="${lead.id}" data-kg="${leadKg}">${plateRig(lead, leadKg, true)}<canvas aria-hidden="true"></canvas><button type="button" class="rig-reset" hidden>Remettre en place</button></div>
-    <div class="righint">${gearKind(lead) === "plates" ? "Tire un disque avec le doigt, ou touche-le pour le faire sauter." : gearKind(lead) === "db" ? "Attrape un haltère et lance-le." : "Pousse la pile du doigt."}</div>
+    ${lead ? `<div class="rigbox" id="rigbox" data-ex="${lead.id}" data-kg="${leadKg}">${plateRig(lead, leadKg, true)}<canvas aria-label="Mini-jeu : ${gearKind(lead) === "plates" ? "charge la barre" : gearKind(lead) === "stack" ? "place la goupille" : "fais tes répétitions"}"></canvas>
+      <div class="rigbar"><div class="rigstat" aria-live="polite"></div><button type="button" class="chip" data-rg="solve">Solution</button><button type="button" class="chip" data-rg="reset">Recommencer</button></div></div>
+    <div class="righint">${gearKind(lead) === "plates" ? "Glisse les disques du râtelier sur la barre : les deux côtés se chargent ensemble. Touche un disque chargé pour l'enlever." : gearKind(lead) === "stack" ? "Fais glisser la goupille orange jusqu'à la bonne plaque." : "Touche les haltères pour enchaîner tes répétitions."}</div>
     <div class="rigcap"><div><b>${esc(lead.nom)}</b><small>${esc(gearLabel(lead, leadKg))}</small></div><div class="kg">${fmtKg(leadKg)}<span> kg</span></div></div>` : ""}
     <div class="homecta"><button class="btn pri" data-act="start" data-s="${s}">Commencer la séance</button><a class="btn sec" href="#/programme/${s}">Voir</a></div>
     <div class="quick">
@@ -674,6 +721,7 @@ function vHome() {
   ${!notifCfg().on && !DB.settings.notifAsked ? `<div class="card pad nprompt"><div><b>Rappels</b><p>Trois messages par jour au plus : repas oublié, séance restée ouverte, record à portée.</p></div><div class="btns row"><a class="btn pri sm" href="#/reglages/rappels">Les activer</a><button class="btn ghost sm" data-act="notif-later">Plus tard</button></div></div>` : ""}
   ${weightCardHome()}
   <div class="sec-title"><h2 class="disp">Cette semaine</h2>${syncBadge()}</div>
+  ${weekBar(thisWeek)}
   <div class="tiles">
     <div class="tile"><b data-n="${thisWeek.length}">${thisWeek.length}<span class="dim">/3</span></b><small>séances cette semaine</small></div>
     <div class="tile"><b data-n="${ws.length}">${ws.length}</b><small>séances terminées au total</small></div>
@@ -683,6 +731,17 @@ function vHome() {
   ${lastHTML}`;
 }
 
+/* La barre de la semaine : chaque séance terminée charge un disque ; trois disques, semaine bouclée. */
+function weekBar(ws) {
+  const cols = [["#D52B2B", "#fff"], ["#2457B8", "#fff"], ["#EDC229", "#23272B"]], n = Math.min(3, ws.length), W = 340;
+  let s = `<svg class="weekbar" viewBox="0 0 ${W} 92" role="img" aria-label="${n} séance${n > 1 ? "s" : ""} sur 3 cette semaine"><rect x="0" y="42" width="${W}" height="8" rx="2" fill="#9AA0A4"/><rect x="96" y="30" width="10" height="32" rx="2" fill="#23272B"/>`;
+  for (let i = 0; i < 3; i++) { const x = 112 + i * 30, w = ws.slice().reverse()[i];
+    s += i < n ? `<g class="wp" style="animation-delay:${.15 + i * .12}s"><rect x="${x}" y="4" width="26" height="84" rx="6" fill="${cols[i][0]}"/><text x="${x + 13}" y="50" text-anchor="middle" transform="rotate(-90 ${x + 13} 46)" font-family="Barlow Condensed, sans-serif" font-weight="800" font-size="12" fill="${cols[i][1]}">${esc(w ? (w.session === "L" ? "LIBRE" : w.session) : "")}</text></g>`
+      : `<rect x="${x + 1}" y="5" width="24" height="82" rx="6" fill="none" stroke="#AEB3B1" stroke-width="2" stroke-dasharray="5 5"/>`; }
+  s += `<rect x="${112 + 3 * 30 + 2}" y="28" width="10" height="36" rx="2" fill="#23272B"/>`;
+  const txt = n >= 3 ? "Semaine bouclée. Les séances en plus comptent pour le volume." : `${3 - n} disque${3 - n > 1 ? "s" : ""} à charger avant dimanche.`;
+  return `<div class="weekwrap">${s}</svg><p>${txt}</p></div>`;
+}
 function weightCardHome() {
   const st = wgStats();
   if (!st) return `<a class="card pad wcard" href="#/poids" style="margin-top:14px"><div><div class="eyebrow">Poids · objectif ${fmtKg(num(DB.settings.goalKg) || 77)} kg</div>
@@ -2873,7 +2932,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
   }).catch(() => {});
 }
 
-window.__mpf = { get db() { return DB; }, version: APP_VERSION, syncNow };
+window.__mpf = { get db() { return DB; }, version: APP_VERSION, syncNow, mountRig };
 render();
 scheduleSync(800);
 })();
