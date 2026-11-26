@@ -1,6 +1,16 @@
-# 🏋️ Mon Programme Fitness : mon carnet d'entraînement, 100 % gratuit
+# FONTE : mon carnet de musculation et de nutrition, 100 % gratuit
 
-Une application web en noir et blanc pour suivre mon programme full body (séances A, B et C, 3 fois par semaine) à la salle, depuis mon iPhone ou mon ordinateur.
+(Anciennement « Mon Programme Fitness ».) Une application web pour suivre mon programme full body (séances A, B et C, 3 fois par semaine) à la salle, depuis mon iPhone ou mon ordinateur.
+
+**Identité FONTE (V8)** : on « soulève de la fonte ». Logo dessiné à la main (le O est un disque olympique à trois poignées, une goutte de métal coule de la barre du T). Couleurs acier et fonte ; les couleurs des disques de compétition servent de code des poids (rouge 25, bleu 20, jaune 15, vert 10, blanc 5 kg). Police Barlow. La séance en cours passe en thème sombre, lisible en salle.
+
+- **Charge dessinée** : sur l'accueil, la charge du jour est dessinée avec le vrai matériel (disques sur la barre, paire d'haltères ou pile de poids avec la goupille). Pendant la séance, chaque exercice indique quoi charger (ex. « de chaque côté : 25, 25, 20, 2,5 kg »). Pour la presse, la charge notée est celle des disques (réglage `sledKg` pour ajouter le chariot).
+- **Forme du jour** (accueil) : fatigué, normal ou en forme ; le coach garde la charge, suit le plan ou propose de pousser sur la dernière série.
+- **Échauffement conseillé** avant la première série du premier exercice (8 répétitions à 50 %, puis 5 à 70 %).
+- **Écran de record** à la fin de la séance quand un record est battu.
+- **Disques de collection** (Progrès) : 12 objectifs à débloquer (nombre de séances, semaines complètes, records, 10 t en une séance, 30 jours de repas notés, objectif de poids).
+- **Muscles en retard** signalés dans la carte des muscles de la semaine.
+- **Idée de repas** (Nutrition) : de quoi compléter les protéines restantes sans dépasser les calories du jour.
 
 - **18 exercices**, chacun avec deux vraies photos (position de départ et d'arrivée), le réglage de la machine, l'exécution pas à pas, les erreurs à éviter et un lien vers des vidéos.
 - **Planche anatomique face + dos** pour chaque exercice : le muscle principal est en **blanc plein**, les muscles secondaires sont **hachurés**, avec la légende en français.
@@ -138,7 +148,7 @@ supabase/
 - **Planches anatomiques** : tracés de [react-native-body-highlighter](https://github.com/HichamELBSI/react-native-body-highlighter), licence MIT © 2022 ELABBASSI Hicham, découpés par muscle et recolorés.
 - **Synchronisation** : [supabase-js](https://github.com/supabase/supabase-js), licence MIT.
 - **Aliments** : table de composition nutritionnelle Ciqual 2025, Anses (Licence Ouverte / Etalab 2.0) ; produits emballés : Open Food Facts (ODbL) ; lecture des codes-barres : ZXing (licence Apache 2.0).
-- **Police** : [Archivo](https://github.com/Omnibus-Type/Archivo), SIL Open Font License 1.1.
+- **Police** : [Barlow](https://github.com/jpt/barlow) (Barlow, Semi Condensed et Condensed), SIL Open Font License 1.1.
 - Les vidéos sont des recherches YouTube ciblées (aucune vidéo n'est copiée dans l'appli).
 
 Les conseils techniques ne remplacent pas l'avis d'un coach ou d'un professionnel de santé.
