@@ -669,3 +669,121 @@ body.dark input[type=checkbox]{accent-color:#E3E5E2}
 .hero.kcal{background:var(--s1);border-radius:var(--r);padding:18px}
 body.dark .nav a.go.on{background:transparent}
 [hidden]{display:none!important}
+
+/* ═══════════════ V8.1 · Couleur par onglet, barre vivante, mouvement ═══════════════
+   Chaque onglet prend la couleur d'un disque : Accueil bleu 20, Programme rouge 25,
+   Progrès jaune 15, Nutrition vert 10. L'orange coulée reste réservé au direct (séance, records). */
+body{--acc:#2457B8;--acc-ink:#fff;--acc-txt:#1E4A9E;--acc-soft:#D3DCEC}
+body[data-tab=prog]{--acc:#D52B2B;--acc-ink:#fff;--acc-txt:#B3221F;--acc-soft:#EED3D1}
+body[data-tab=prog2]{--acc:#EDC229;--acc-ink:#23272B;--acc-txt:#7A5F00;--acc-soft:#F1E6BE}
+body[data-tab=nutri]{--acc:#2F8F5B;--acc-ink:#fff;--acc-txt:#23704A;--acc-soft:#D0E3D7}
+body[data-tab=wk]{--acc:#FF4D00;--acc-ink:#23272B;--acc-txt:#FF7A3D;--acc-soft:#3F464D}
+.btn.pri{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+body.dark .btn.pri{background:#FF4D00;color:#23272B;border-color:#FF4D00}
+.top h1::after,.sheet h2.disp::after{content:"";display:block;width:34px;height:6px;border-radius:3px;background:var(--acc);margin-top:10px}
+.sheet h2.disp::after{display:none}
+.pbar i,.pbar-lg i{background:var(--acc)}
+body[data-tab=prog2] .pbar i{background:#23272B}
+.chart .ln{stroke:var(--acc-txt)}
+.chart .pt{stroke:var(--acc-txt)}
+.chart .bar{fill:var(--acc)}
+body[data-tab=prog2] .chart .bar{fill:#D3AA0F}
+.seg button.on{box-shadow:inset 0 -3px 0 var(--acc)}
+.eyebrow b,.focus b{color:var(--acc-txt)}
+.nav a.on{position:relative}
+.nav a.on::after{content:"";position:absolute;left:50%;bottom:5px;width:18px;height:4px;margin-left:-9px;border-radius:2px;background:var(--acc)}
+body.dark .nav a.on::after{background:#FF4D00}
+.nav a[href^="#/progres"].on::after{background:#EDC229}
+/* Accueil : la barre se joue au doigt */
+.rigbox{position:relative;margin:14px -16px 0;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.rigbox .rig{margin:0;width:100%}
+.rigbox canvas{display:none;width:100%;touch-action:pan-y;cursor:grab}
+.rigbox canvas.grab{cursor:grabbing}
+.rigbox.live .rig{display:none}
+.rigbox.live canvas{display:block}
+.rig-reset{position:absolute;right:16px;top:6px;height:34px;padding:0 14px;border:0;border-radius:999px;background:var(--s1);color:var(--txt);font:600 13px var(--font)}
+.righint{font-size:13px;color:var(--dim);margin:2px 0 0}
+.rigbox:not(.live)+.righint{visibility:hidden}
+.quick{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 0}
+.quick .q{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-height:78px;padding:12px;border:0;border-radius:16px;background:var(--s1);color:var(--txt);font:600 14px var(--font);text-align:left;cursor:pointer}
+.quick .q svg{width:22px;height:22px;color:var(--acc)}
+.quick .q svg .w{fill:var(--acc);opacity:.35}
+.nprompt{display:flex;flex-direction:column;gap:10px;margin-top:14px;box-shadow:inset 3px 0 0 var(--acc)}
+.nprompt p{margin:4px 0 0;color:var(--mut);font-size:14px}
+.btns.row{flex-direction:row;flex-wrap:wrap;margin-top:0}
+.btns.row .btn{flex:1 1 0;min-width:0}
+/* Pesée rapide */
+.stepper{display:grid;grid-template-columns:64px 1fr auto 64px;align-items:center;gap:8px;margin:18px 0 10px}
+.stepper button{height:64px;border:0;border-radius:18px;background:var(--s1);color:var(--txt);font:700 30px var(--font);touch-action:manipulation}
+.stepper output{font-family:var(--cond);font-weight:800;font-size:64px;line-height:1;text-align:right}
+.stepper span{font-size:18px;color:var(--mut);align-self:end;padding-bottom:8px}
+.qwchips{display:flex;gap:8px;justify-content:center;margin-bottom:8px}
+/* Nutrition : habituels, eau, objectifs repliés */
+.usual{margin:16px 0 0}
+.usual h3{font-size:15px;font-weight:600;margin:0 0 8px}
+.usual h3 small{font-weight:500;color:var(--dim);margin-left:6px}
+.uscroll{display:flex;gap:8px;overflow-x:auto;margin:0 -16px;padding:0 16px 4px;scrollbar-width:none}
+.uscroll::-webkit-scrollbar{display:none}
+.uchip{flex:0 0 auto;max-width:210px;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 14px;border:0;border-radius:16px;background:var(--s1);color:var(--txt);font:600 14px var(--font);text-align:left;cursor:pointer}
+.uchip b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.uchip small{font-weight:500;color:var(--mut);font-size:12px}
+.uchip:active,.quick .q:active,.gl:active{transform:scale(.96)}
+.water{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0 0;padding:12px 14px;border-radius:16px;background:var(--s1)}
+.water b{display:block;font-weight:600}
+.water small{color:var(--mut);font-size:13px}
+.glasses{display:flex;gap:2px}
+.gl{width:26px;height:36px;padding:3px;border:0;background:none;color:var(--line2);cursor:pointer;transition:color .15s,transform .1s}
+.gl svg{width:100%;height:100%}
+.gl .w{fill:transparent;transition:fill .2s}
+.gl.on{color:#2457B8}
+.gl.on .w{fill:#2457B8;opacity:.8}
+details.goals{margin-top:30px}
+details.goals summary{list-style:none;display:flex;justify-content:space-between;align-items:baseline;gap:10px;cursor:pointer;padding:6px 0 10px}
+details.goals summary::-webkit-details-marker{display:none}
+details.goals summary .disp{font-size:24px}
+details.goals summary small{color:var(--mut);font-size:13px}
+details.goals summary::after{content:"Modifier";font-size:13px;font-weight:600;color:var(--acc-txt)}
+details.goals[open] summary::after{content:"Fermer"}
+/* Progrès : le mois en chiffres */
+.month{margin:14px 0 0;padding:16px;border-radius:var(--r);background:#23272B;color:#E3E5E2}
+.month h2{margin:0;font:700 20px var(--semi)}
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px 10px;margin-top:12px}
+.mgrid b{display:block;font-size:40px;line-height:1;color:#E3E5E2}
+.mgrid div:first-child b{color:#EDC229}
+.mgrid small{color:#B4BABE;font-size:13px}
+.month p{margin:14px 0 0;font-size:14px;color:#B4BABE}
+/* Rappels */
+.notif p{margin:0;color:var(--txt)}
+.ntimes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ntimes .sel{height:46px;padding:0 10px;font:600 15px var(--font)}
+.nkinds{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.nkinds label{display:flex;gap:10px;align-items:center;font-size:15px;cursor:pointer}
+.nkinds input{width:22px;height:22px}
+ol.steps{padding-left:0;list-style:none;counter-reset:st}
+ol.steps li{counter-increment:st;position:relative;padding:0 0 12px 38px;line-height:1.4}
+ol.steps li::before{content:counter(st);position:absolute;left:0;top:-2px;width:26px;height:26px;border-radius:50%;background:var(--acc);color:var(--acc-ink);display:grid;place-items:center;font:800 15px var(--cond)}
+/* Minuteur : la barre se vide */
+.rest-box{position:relative;overflow:hidden}
+.rbar{position:absolute;left:0;right:0;bottom:0;height:5px;background:#23272B;transform-origin:left;transform:scaleX(1);transition:transform .25s linear}
+canvas.rain{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:200}
+/* Mouvement : une entrée d'écran, des barres qui se remplissent, des séries qui claquent */
+@media (prefers-reduced-motion:no-preference){
+  #view.enter{animation:viewIn .24s cubic-bezier(.2,.8,.2,1) both}
+  @keyframes viewIn{from{opacity:0;transform:translateY(8px)}}
+  #view.enter .pbar i,#view.enter .mrow i b,#view.enter .mbars i b{animation:grow .8s .1s cubic-bezier(.2,.8,.2,1) both;transform-origin:left}
+  @keyframes grow{from{transform:scaleX(0)}}
+  #view.enter .chart .ln{stroke-dasharray:2000;animation:draw 1.1s .1s ease-out both}
+  @keyframes draw{from{stroke-dashoffset:2000}to{stroke-dashoffset:0}}
+  .nav a.on{animation:navOn .28s cubic-bezier(.3,1.4,.5,1)}
+  @keyframes navOn{from{transform:scale(.86)}}
+  .srow.pop .ck{animation:ckPop .38s cubic-bezier(.3,1.6,.5,1)}
+  .srow.pop{animation:rowFlash .5s ease-out}
+  @keyframes ckPop{0%{transform:scale(.6)}60%{transform:scale(1.18)}100%{transform:scale(1)}}
+  @keyframes rowFlash{0%{box-shadow:0 0 0 0 rgba(255,77,0,.55)}100%{box-shadow:0 0 0 10px rgba(255,77,0,0)}}
+  .sheet{animation:sheetUp .32s cubic-bezier(.2,.9,.25,1)}
+  @keyframes sheetUp{from{transform:translateY(40px);opacity:.4}}
+  .gl.on svg{animation:fill .3s ease-out}
+  @keyframes fill{from{transform:translateY(3px) scale(.9)}}
+  .recnum{animation:recIn .6s .15s cubic-bezier(.3,1.5,.5,1) both}
+  @keyframes recIn{from{transform:scale(.6);opacity:0}}
+}

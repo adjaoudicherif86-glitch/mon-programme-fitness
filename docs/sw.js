@@ -1,6 +1,6 @@
 /* Service worker : rend l'app disponible hors connexion (après une première visite en ligne).
    IMPORTANT : à chaque mise à jour du code, change VERSION ci-dessous. Tes données ne sont pas touchées. */
-const VERSION = "mpf-8.0.0";
+const VERSION = "mpf-8.1.0";
 const SHELL = [
   "./",
   "index.html",
@@ -9,6 +9,7 @@ const SHELL = [
   "config.js?v=8.0.0",
   "data.js?v=8.0.0",
   "vendor/supabase-2.117.2.js",
+  "vendor/matter-0.20.0.min.js",
   "library.json?v=8.0.0",
   "ciqual.json?v=8.0.0",
   "anatomy-data.js?v=8.0.0",
@@ -85,4 +86,18 @@ self.addEventListener("fetch", e => {
     return;
   }
   e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then(c => c.put(req, cp)); } return r; })));
+});
+
+/* ───── Rappels (V8.1) : notifications envoyées par la tâche GitHub de ton dépôt privé ───── */
+self.addEventListener("push", e => {
+  let d = {}; try { d = e.data ? e.data.json() : {}; } catch (x) { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || "FONTE", { body: d.body || "", tag: d.tag || "fonte", icon: "icons/icon-192.png", badge: "icons/icon-192.png", data: { url: d.url || "./" } }));
+});
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || "./", self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(cs => {
+    for (const c of cs) if (c.url.startsWith(self.registration.scope)) { c.focus(); return c.navigate ? c.navigate(url) : null; }
+    return self.clients.openWindow(url);
+  }));
 });

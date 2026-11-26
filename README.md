@@ -55,6 +55,16 @@ Adresse de l'appli : **https://adjaoudicherif86-glitch.github.io/mon-programme-f
 5. **Branch** : choisis `main`, puis le dossier **`/docs`**, puis **Save**.
 6. Attends 1 à 3 minutes, recharge la page **Settings → Pages** : un cadre affiche « Your site is live at… ». Clique sur le lien.
 
+## Nouveautés V8.1
+
+- Couleur par onglet, prise sur les disques : Accueil bleu, Programme rouge, Progrès jaune, Nutrition vert. L'orange reste pour la séance en cours et les records.
+- Accueil : la barre se joue au doigt. On tire un disque, on le lance, il tombe et rebondit ; un appui bref le fait sauter (moteur physique Matter.js, licence MIT).
+- Accueil : actions rapides (photo du repas, pesée avec boutons + et −, verre d'eau).
+- Nutrition : « Tes habituels » (un appui ajoute un repas déjà noté plusieurs fois), suivi de l'eau, objectifs repliés.
+- Progrès : « Le mois en chiffres ».
+- Mouvement : entrée d'écran, barres et courbes qui se remplissent, chiffres qui défilent, série validée qui claque, minuteur qui se vide, pluie de disques sur un record. Tout se coupe avec « Réduire les animations ».
+- Rappels : notifications push, 3 par jour au plus, envoyées par une tâche GitHub Actions du dépôt privé de données.
+
 ## Installer l'appli sur l'iPhone
 
 1. Ouvre l'adresse de l'appli dans **Safari** (pas Chrome : sur iPhone, seul Safari sait bien l'installer).

@@ -4,7 +4,7 @@
 (() => {
 "use strict";
 
-const APP_VERSION = "8.0.0";
+const APP_VERSION = "8.1.0";
 const KEY = "mpf.v5"; // ne jamais changer : c'est là que sont tes séances sur chaque appareil
 const EX = window.EXERCISES, SES = window.SESSIONS, MUS = window.MUSCLES, CARDIO = window.CARDIO, ANA = window.ANATOMY;
 const EXI = Object.fromEntries(EX.map(e => [e.id, e]));
@@ -317,6 +317,286 @@ function todayKg(e) {
 }
 const roundTo = (x, st) => Math.max(st, Math.round(x / st) * st);
 
+/* ───────────── V8.1 · Mouvement ─────────────
+   Animations sobres, toujours en réponse à une action, coupées si « réduire les animations » est activé. */
+const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const buzz = p => { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) {} };
+function countUp(root) {
+  if (calm()) return;
+  for (const el of $$("[data-n]", root)) {
+    const to = +el.dataset.n, dec = +(el.dataset.dec || 0); if (!isFinite(to) || to === 0) continue;
+    const t0 = performance.now(), dur = 700, f = x => dec ? (Math.round(x * 10 ** dec) / 10 ** dec).toLocaleString("fr-FR", { minimumFractionDigits: dec, maximumFractionDigits: dec }) : Math.round(x).toLocaleString("fr-FR");
+    const final = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild : null; if (!final) continue;
+    const step = now => { const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3); final.nodeValue = f(to * e); if (k < 1 && el.isConnected) requestAnimationFrame(step); else final.nodeValue = f(to); };
+    final.nodeValue = f(0); requestAnimationFrame(step);
+  }
+}
+/* Pluie de disques pour un record : les vraies couleurs des disques, rien d'autre. */
+function plateRain() {
+  if (calm()) return;
+  const c = document.createElement("canvas"); c.className = "rain"; c.setAttribute("aria-hidden", "true"); document.body.appendChild(c);
+  const dpr = Math.min(2, devicePixelRatio || 1), W = innerWidth, H = innerHeight; c.width = W * dpr; c.height = H * dpr; const g = c.getContext("2d"); g.scale(dpr, dpr);
+  const cols = ["#D52B2B", "#2457B8", "#EDC229", "#2F8F5B", "#F7F7F4", "#FF4D00"];
+  const ps = Array.from({ length: 42 }, (_, i) => ({ x: Math.random() * W, y: -20 - Math.random() * H * .6, r: 6 + Math.random() * 12, vy: 2 + Math.random() * 3, vx: (Math.random() - .5) * 1.6, a: Math.random() * 6, va: (Math.random() - .5) * .2, c: cols[i % cols.length], s: .35 + Math.random() * .65 }));
+  const t0 = performance.now();
+  const draw = now => {
+    g.clearRect(0, 0, W, H); const age = now - t0;
+    for (const p of ps) {
+      p.vy += .12; p.x += p.vx; p.y += p.vy; p.a += p.va;
+      if (p.y > H - p.r && p.vy > 0) { p.y = H - p.r; p.vy *= -.35; p.vx *= .8; }
+      g.save(); g.translate(p.x, p.y); g.scale(Math.abs(Math.cos(p.a)) * p.s + .15, 1); g.globalAlpha = age > 2000 ? Math.max(0, 1 - (age - 2000) / 600) : 1;
+      g.fillStyle = p.c; g.beginPath(); g.arc(0, 0, p.r, 0, 7); g.fill();
+      g.fillStyle = "rgba(35,39,43,.55)"; g.beginPath(); g.arc(0, 0, p.r * .25, 0, 7); g.fill(); g.restore();
+    }
+    if (age < 2600) requestAnimationFrame(draw); else c.remove();
+  };
+  requestAnimationFrame(draw);
+}
+
+/* ───────────── V8.1 · La barre de l'accueil ─────────────
+   Les disques (ou haltères, ou la pile) se prennent au doigt : on les tire, on les lance, ils tombent
+   et rebondissent. Un appui bref fait sauter un disque de la barre. Moteur : Matter.js (MIT), chargé à la demande. */
+let rigWorld = null;
+async function mountRig() {
+  const box = $("#rigbox"); if (!box) { if (rigWorld) rigWorld.stop(); return; }
+  if (rigWorld && rigWorld.box === box) return;
+  if (rigWorld) rigWorld.stop();
+  try { if (!window.Matter) await loadScript("vendor/matter-0.20.0.min.js"); } catch (e) { return; }
+  if (!box.isConnected) return;
+  const M = window.Matter, { Engine, Bodies, Body, Composite, Constraint, Query, Events } = M;
+  const e = exOf(box.dataset.ex), kg = +box.dataset.kg, kind = gearKind(e); if (!e || !kind) return;
+  const cv = $("canvas", box), dpr = Math.min(2, devicePixelRatio || 1);
+  const W = box.clientWidth, H = 232; cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const eng = Engine.create({ enableSleeping: true }); eng.gravity.y = 1.15;
+  const wall = { isStatic: true, render: { hide: true } };
+  Composite.add(eng.world, [Bodies.rectangle(W / 2, H + 30, W * 3, 60, wall), Bodies.rectangle(-30, H / 2 - 300, 60, H + 800, wall), Bodies.rectangle(W + 30, H / 2 - 300, 60, H + 800, wall), Bodies.rectangle(W / 2, -560, W * 3, 60, wall)]);
+  const items = [], draws = [];
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  if (kind === "plates") {
+    const { list } = platesFor(kg, barOf(e)); const cy = H - 84, bw = 12;
+    const bar = Bodies.rectangle(W / 2, cy, W + 40, bw, { isStatic: true, label: "bar" }); Composite.add(eng.world, bar);
+    draws.push(() => { g.fillStyle = "#9AA0A4"; g.fillRect(0, cy - bw / 2, W, bw); g.fillStyle = "#BCC1C4"; g.fillRect(0, cy - bw / 2, W, 3); g.fillStyle = "#5E646A"; rr(W * .34 - 16, cy - 15, 14, 30, 2); g.fill(); });
+    let x = W * .34;
+    list.forEach((w, i) => {
+      const [, c, t, f] = PLATES.find(p => p[0] === w); const ph = 164 * f, ww = w >= 10 ? 28 : 18;
+      const b = Bodies.rectangle(x + ww / 2, cy, ww, ph, { chamfer: { radius: 5 }, friction: .6, frictionAir: .012, restitution: .28, density: .002 * (w / 10 + .5), label: "plate" });
+      b.plugin = { c, t, w: ww, h: ph, txt: w >= 10 ? fmtKg(w) : "", home: { x: x + ww / 2, y: cy }, delay: i * 70 };
+      Body.setStatic(b, true); items.push(b); x += ww + 3;
+    });
+    const col = Bodies.rectangle(x + 7, cy, 12, 34, { isStatic: true, chamfer: { radius: 2 }, label: "collar" }); Composite.add(eng.world, col);
+    draws.push(() => { g.fillStyle = "#23272B"; rr(col.position.x - 6, cy - 17, 12, 34, 2); g.fill(); });
+  } else if (kind === "db") {
+    const sc = Math.min(1, .55 + kg / 60);
+    for (let k = 0; k < 2; k++) {
+      const hw = 40 * sc, hh = 62 * sc, hl = 104, cx = W / 2 + (k ? 70 : -70), y = H - hh / 2 - 2 - (k ? 0 : 0);
+      const L = Bodies.rectangle(cx - hl / 2 - hw / 2, y, hw, hh, { chamfer: { radius: 9 } }), R = Bodies.rectangle(cx + hl / 2 + hw / 2, y, hw, hh, { chamfer: { radius: 9 } }), Hd = Bodies.rectangle(cx, y, hl, 11, { chamfer: { radius: 3 } });
+      const b = Body.create({ parts: [Hd, L, R], friction: .5, restitution: .3, frictionAir: .01, label: "db" });
+      Body.scale(b, .62, .62); Body.setPosition(b, { x: W / 2 + (k ? 86 : -86), y: H - 30 - k * 0 });
+      b.plugin = { db: true, kg: fmtKg(kg) }; items.push(b);
+    }
+  } else {
+    const n = 12, on = Math.max(1, Math.min(n, Math.round(kg / 5))), bh = 13, bw = 132;
+    draws.push(() => { g.fillStyle = "#9AA0A4"; g.fillRect(W / 2 - 3, 0, 6, H); });
+    for (let i = 0; i < n; i++) {
+      const b = Bodies.rectangle(W / 2, H - 2 - bh / 2 - (n - 1 - i) * (bh + 1.5), bw, bh, { chamfer: { radius: 3 }, friction: .7, restitution: .15, frictionAir: .01, label: "brick" });
+      b.plugin = { c: i < n - on ? "#C9CDCB" : "#3A4046", pin: i === n - on, w: bw, h: bh }; items.push(b);
+    }
+  }
+  Composite.add(eng.world, items);
+  const reset = $(".rig-reset", box);
+  let drag = null, raf = 0, still = 0, entered = !!calm() || kind !== "plates", tEnter = performance.now(), lastBuzz = 0, touched = false;
+  Events.on(eng, "collisionStart", ev => { const now = performance.now(); if (now - lastBuzz < 90) return;
+    for (const p of ev.pairs) { const v = Math.hypot(p.bodyA.velocity.x - p.bodyB.velocity.x, p.bodyA.velocity.y - p.bodyB.velocity.y); if (v > 6) { buzz(Math.min(25, v * 1.5)); lastBuzz = now; break; } } });
+  const paint = () => {
+    g.clearRect(0, 0, W, H); for (const d of draws) d();
+    for (const b of items) {
+      const P = b.plugin;
+      if (P.db) {
+        for (const [i, part] of b.parts.slice(1).entries()) { const v = part.vertices; g.beginPath(); g.moveTo(v[0].x, v[0].y); for (const q of v.slice(1)) g.lineTo(q.x, q.y); g.closePath(); g.fillStyle = i === 0 ? "#9AA0A4" : "#3A4046"; g.fill(); }
+        const hp = b.parts.slice(2).map(x => x.position);
+        g.fillStyle = "#E3E5E2"; g.font = "800 12px 'Barlow Condensed', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+        for (const q of hp) { g.save(); g.translate(q.x, q.y); g.rotate(b.angle); g.fillText(P.kg, 0, 1); g.restore(); }
+        continue;
+      }
+      g.save(); g.translate(b.position.x, b.position.y); g.rotate(b.angle);
+      rr(-P.w / 2, -P.h / 2, P.w, P.h, P.h > 30 ? 6 : 3); g.fillStyle = P.c; g.fill();
+      if (P.c === "#F7F7F4") { g.lineWidth = 1.5; g.strokeStyle = "#23272B"; g.stroke(); }
+      if (P.txt) { g.rotate(-Math.PI / 2); g.fillStyle = P.t; g.font = "800 13px 'Barlow Condensed', sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(P.txt, 0, 1); }
+      g.restore();
+      if (P.pin) { g.save(); g.translate(b.position.x, b.position.y); g.rotate(b.angle); g.fillStyle = "#FF4D00"; g.fillRect(P.w / 2, -3, 24, 6); g.beginPath(); g.arc(P.w / 2 + 28, 0, 6, 0, 7); g.fill(); g.restore(); }
+    }
+  };
+  const loop = now => {
+    raf = 0; if (!box.isConnected) return stop();
+    if (!entered) { // les disques glissent sur la barre, un par un
+      let all = true;
+      for (const b of items) { const P = b.plugin, k = Math.min(1, Math.max(0, (now - tEnter - P.delay) / 520)), e3 = 1 - Math.pow(1 - k, 3); Body.setPosition(b, { x: P.home.x + (1 - e3) * (W - P.home.x + 40), y: P.home.y }); if (k < 1) all = false; }
+      if (all) { entered = true; buzz(8); }
+    } else Engine.update(eng, 1000 / 60);
+    paint();
+    const moving = drag || !entered || items.some(b => !b.isStatic && !b.isSleeping && b.speed > .05);
+    still = moving ? 0 : still + 1;
+    if (still < 30) raf = requestAnimationFrame(loop);
+  };
+  const wake = () => { still = 0; if (!raf) raf = requestAnimationFrame(loop); };
+  const pt = ev => { const r = cv.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
+  const hit = p => Query.point(items, p)[0] || items.find(b => b.plugin && b.plugin.db && Query.point(b.parts.slice(1), p).length);
+  const onTouch = ev => { const t = ev.touches[0]; if (!t) return; if (hit(pt(t))) ev.preventDefault(); };
+  cv.addEventListener("touchstart", onTouch, { passive: false });
+  cv.addEventListener("pointerdown", ev => {
+    const p = pt(ev), b = hit(p); if (!b || !entered) return;
+    ev.preventDefault(); try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
+    const wasStatic = b.isStatic; if (wasStatic) Body.setStatic(b, false);
+    Body.set(b, "isSleeping", false); for (const o of items) if (o.isSleeping) M.Sleeping.set(o, false);
+    const off = { x: p.x - b.position.x, y: p.y - b.position.y }, ca = Math.cos(-b.angle), sa = Math.sin(-b.angle);
+    const c = Constraint.create({ pointA: { ...p }, bodyB: b, pointB: { x: off.x * ca - off.y * sa, y: off.x * sa + off.y * ca }, stiffness: .18, damping: .08, length: 0 });
+    Composite.add(eng.world, c); drag = { b, c, p0: p, t0: performance.now(), wasStatic, id: ev.pointerId };
+    cv.classList.add("grab"); if (!touched) { touched = true; reset.hidden = false; } buzz(6); wake();
+  });
+  cv.addEventListener("pointermove", ev => { if (!drag || ev.pointerId !== drag.id) return; const p = pt(ev); drag.c.pointA.x = p.x; drag.c.pointA.y = p.y; wake(); });
+  const end = ev => {
+    if (!drag || (ev && ev.pointerId !== drag.id)) return;
+    Composite.remove(eng.world, drag.c); const d = drag; drag = null; cv.classList.remove("grab");
+    const p = ev ? pt(ev) : d.p0;
+    if (d.wasStatic && Math.hypot(p.x - d.p0.x, p.y - d.p0.y) < 8 && performance.now() - d.t0 < 280) Body.setVelocity(d.b, { x: 4 + Math.random() * 3, y: -9 - Math.random() * 3 });
+    wake();
+  };
+  cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end); cv.addEventListener("lostpointercapture", end);
+  reset.onclick = () => { rigWorld && rigWorld.stop(); rigWorld = null; reset.hidden = true; box.classList.remove("live"); mountRig(); };
+  function stop() { cancelAnimationFrame(raf); raf = 0; Engine.clear(eng); cv.removeEventListener("touchstart", onTouch); if (rigWorld && rigWorld.eng === eng) rigWorld = null; }
+  rigWorld = { box, eng, stop };
+  box.classList.add("live"); wake();
+}
+
+/* ───────────── V8.1 · Eau ───────────── */
+const waterOf = d => +((DB.settings.water || {})[d] || 0);
+function setWater(d, n) {
+  const W = DB.settings.water = { ...(DB.settings.water || {}) }; W[d] = Math.max(0, Math.min(16, n));
+  const lim = new Date(); lim.setDate(lim.getDate() - 30); for (const k of Object.keys(W)) if (k < isoDay(lim)) delete W[k];
+  profileTouch();
+}
+function profileTouch(ms) { DB.settings.profileUpdatedAt = new Date().toISOString(); DB.settings.profileDirty = true; saveNow(); scheduleSync(ms); }
+const GLASS = '<svg viewBox="0 0 20 26" aria-hidden="true"><path d="M2 2h16l-2 21a2 2 0 0 1-2 1.8H6A2 2 0 0 1 4 23z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path class="w" d="M4.2 9h11.6l-1.3 14H5.5z"/></svg>';
+function waterHTML(day) {
+  const n = waterOf(day), goal = 8;
+  return `<div class="water"><div><b>Eau</b><small>${n ? `${fmtKg(n * .25)} L sur 2 L` : "Un verre = 25 cl"}</small></div>
+    <div class="glasses">${Array.from({ length: goal }, (_, i) => `<button type="button" class="gl ${i < n ? "on" : ""}" data-act="water" data-d="${day}" data-n="${i < n && i === n - 1 ? i : i + 1}" aria-label="${i + 1} verre${i ? "s" : ""}">${GLASS}</button>`).join("")}</div></div>`;
+}
+
+/* ───────────── V8.1 · Repas habituels (un appui = ajouté) ───────────── */
+function usualMeals() {
+  const lim = new Date(); lim.setDate(lim.getDate() - 60); const L = isoDay(lim), by = new Map();
+  for (const m of DB.meals) { if (m.deleted || m.flag || !m.name || m.date < L || m.src === "oubli") continue;
+    const k = normQ(m.name); const x = by.get(k) || { n: 0, m: null, slots: {} }; x.n++; x.slots[m.slot] = (x.slots[m.slot] || 0) + 1; if (!x.m || m.date >= x.m.date) x.m = m; by.set(k, x); }
+  return [...by.values()].filter(x => x.n >= 2).sort((a, b) => b.n - a.n).slice(0, 8).map(x => ({ ...x, slot: Object.entries(x.slots).sort((a, b) => b[1] - a[1])[0][0] }));
+}
+
+/* ───────────── V8.1 · Ton mois en chiffres ───────────── */
+function monthRecap() {
+  const now = new Date(), first = isoDay(new Date(now.getFullYear(), now.getMonth(), 1));
+  const ws = live().filter(w => w.date >= first), vol = ws.reduce((a, w) => a + wVol(w), 0);
+  const prs = prEvents().filter(p => p.date >= first).length;
+  const wl = wgLive().filter(x => x.date >= first).sort((a, b) => a.date < b.date ? -1 : 1);
+  const wd = wl.length > 1 ? Math.round((wl[wl.length - 1].kg - wl[0].kg) * 10) / 10 : null;
+  const days = new Set(DB.meals.filter(m => !m.deleted && !m.flag && m.date >= first).map(m => m.date)).size;
+  const mois = now.toLocaleDateString("fr-FR", { month: "long" });
+  return `<section class="month"><h2>${esc(mois[0].toUpperCase() + mois.slice(1))} en chiffres</h2>
+    <div class="mgrid">
+      <div><b class="num" data-n="${ws.length}">${ws.length}</b><small>séance${ws.length > 1 ? "s" : ""}</small></div>
+      <div><b class="num" data-n="${Math.round(vol / 1000 * 10) / 10}" data-dec="1">${fmtKg(Math.round(vol / 100) / 10)}</b><small>tonnes soulevées</small></div>
+      <div><b class="num" data-n="${prs}">${prs}</b><small>record${prs > 1 ? "s" : ""} battu${prs > 1 ? "s" : ""}</small></div>
+      <div><b class="num">${wd == null ? "–" : (wd > 0 ? "+" : wd < 0 ? "−" : "") + fmtKg(Math.abs(wd))}</b><small>${wd == null ? "deux pesées pour comparer" : "kg sur la balance"}</small></div>
+    </div>
+    <p>${days ? `Repas notés ${days} jour${days > 1 ? "s" : ""} sur ${now.getDate()}.` : "Aucun repas noté ce mois-ci."}</p></section>`;
+}
+
+/* ───────────── V8.1 · Rappels (notifications push) ─────────────
+   Le téléphone s'abonne ici ; l'abonnement part dans ton dépôt privé avec le reste du profil.
+   Une tâche GitHub Actions de ce dépôt lit ton carnet et envoie au plus 3 messages par jour. */
+const VAPID_PUBLIC = "BM_LCFmHcombp0UzYMbA4rE7vMmAHvL2e7L3nTP-SDnOt-IjLn3dlzZdvIsrjjno3hOcpJ05D1J4zF_4H9HGshA";
+const NOTIF_DEF = { on: false, times: ["08:00", "13:30", "20:00"], tone: "pote", kinds: { repas: true, seance: true, motiv: true } };
+const notifCfg = () => ({ ...NOTIF_DEF, ...(DB.settings.notif || {}), kinds: { ...NOTIF_DEF.kinds, ...((DB.settings.notif || {}).kinds || {}) } });
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushOK = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function setLive() {
+  const d = DB.draft; const nl = d ? { s: d.session, at: d.startedAt } : null;
+  if (JSON.stringify(nl) === JSON.stringify(DB.settings.live || null)) return;
+  DB.settings.live = nl; profileTouch(4000);
+}
+const b64u = s => { const p = "=".repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+async function notifEnable() {
+  if (!pushOK()) return toast("Ce navigateur ne gère pas les notifications.");
+  if (isIOS() && !standalone()) return notifHowto();
+  if (!ghCfg()) return toast("Connecte d'abord la synchronisation GitHub (plus bas) : les rappels lisent ton carnet là-bas.");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { render(true); return sheet(`<h2 class="disp">Notifications refusées</h2><p>Ton téléphone a bloqué les notifications pour FONTE. Pour les autoriser :</p>
+    <ol class="steps"><li>${isIOS() ? "Ouvre <b>Réglages</b> sur l'iPhone, puis <b>Notifications</b>." : "Ouvre les <b>Paramètres</b> du téléphone, puis <b>Applications</b>."}</li><li>Touche <b>FONTE</b>.</li><li>Active <b>Autoriser les notifications</b>, puis reviens ici et touche à nouveau « Activer les rappels ».</li></ol>
+    <div class="btns"><button class="btn pri" data-close>Compris</button></div>`); }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(VAPID_PUBLIC) });
+    const j = sub.toJSON(); const dev = isIOS() ? "iPhone" : /android/i.test(navigator.userAgent) ? "Android" : "Ordinateur";
+    DB.settings.push = [...(DB.settings.push || []).filter(x => x.endpoint !== j.endpoint), { endpoint: j.endpoint, keys: j.keys, dev, at: new Date().toISOString() }].slice(-4);
+    DB.settings.notif = { ...notifCfg(), on: true };
+    profileTouch(); syncNow(false); render(true);
+    toast("Rappels activés ✓"); notifTest();
+  } catch (e) { toast("Activation impossible : " + (e && e.message || e)); }
+}
+async function notifOff() {
+  DB.settings.notif = { ...notifCfg(), on: false };
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) { DB.settings.push = (DB.settings.push || []).filter(x => x.endpoint !== sub.endpoint); await sub.unsubscribe(); } } catch (e) {}
+  profileTouch(); render(true); toast("Rappels coupés.");
+}
+async function notifTest() {
+  try { const reg = await navigator.serviceWorker.ready; await reg.showNotification("FONTE", { body: "C'est bon, les rappels arrivent bien sur ce téléphone.", icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: "fonte-test" }); }
+  catch (e) { toast("Essai impossible : " + (e && e.message || e)); }
+}
+function notifHowto() {
+  sheet(`<h2 class="disp">D'abord, installe FONTE</h2>
+    <p>Sur iPhone, les notifications ne marchent que si FONTE est ouverte depuis l'écran d'accueil (iOS 16.4 ou plus récent).</p>
+    <ol class="steps">
+      <li>Ouvre FONTE dans <b>Safari</b> (pas Chrome).</li>
+      <li>Touche le bouton <b>Partager</b> : le carré avec une flèche vers le haut, en bas de l'écran.</li>
+      <li>Fais défiler et touche <b>Sur l'écran d'accueil</b>, puis <b>Ajouter</b>.</li>
+      <li>Ferme Safari et ouvre FONTE depuis sa nouvelle icône.</li>
+      <li>Reviens dans Réglages, section Rappels, et touche <b>Activer les rappels</b>.</li>
+    </ol>
+    <div class="btns"><button class="btn pri" data-close>Compris</button></div>`);
+}
+function notifPanel() {
+  const N = notifCfg(), perm = "Notification" in window ? Notification.permission : "unsupported";
+  const on = N.on && perm === "granted" && (DB.settings.push || []).length;
+  const opts = []; for (let m = 6 * 60; m <= 22 * 60; m += 30) opts.push(`${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`);
+  let head;
+  if (!pushOK() && !(isIOS() && !standalone())) head = `<p class="mut">Ce navigateur ne gère pas les notifications. Sur iPhone, installe FONTE sur l'écran d'accueil depuis Safari.</p>`;
+  else if (on) head = `<p>Activés sur ${esc((DB.settings.push || []).map(x => x.dev).join(", "))}. Trois messages par jour au plus, seulement s'il reste quelque chose à faire.</p>
+    <div class="btns row"><button class="btn sec sm" data-act="notif-test">M'envoyer un essai</button><button class="btn ghost sm" data-act="notif-off">Couper</button></div>`;
+  else head = `<p>Un repas oublié, une séance restée ouverte, un record à portée : FONTE te prévient, trois fois par jour au plus.</p>
+    <button class="btn pri block" data-act="notif-on">Activer les rappels</button>${isIOS() && !standalone() ? `<p class="mut" style="font-size:13px;margin:8px 0 0">Sur iPhone, il faut d'abord ajouter FONTE à l'écran d'accueil. Le bouton t'explique comment.</p>` : ""}`;
+  return `<div class="card pad notif">${head}
+    <div class="field" style="margin-top:14px"><label>Heures</label><div class="ntimes">${N.times.map((t, i) => `<select class="sel" data-nt="${i}" aria-label="Rappel ${i + 1}">${opts.map(o => `<option ${o === t ? "selected" : ""}>${o}</option>`).join("")}</select>`).join("")}</div></div>
+    <div class="field"><label>Ton du coach</label><div class="seg" role="radiogroup">${[["pote", "Pote de salle"], ["sobre", "Sobre"]].map(([k, l]) => `<button type="button" role="radio" aria-checked="${N.tone === k}" class="${N.tone === k ? "on" : ""}" data-act="notif-tone" data-v="${k}">${l}</button>`).join("")}</div></div>
+    <div class="nkinds">${[["repas", "Repas oubliés"], ["seance", "Séances à faire ou restées ouvertes"], ["motiv", "Résultats et encouragements"]].map(([k, l]) => `<label><input type="checkbox" data-nk="${k}" ${N.kinds[k] ? "checked" : ""}><span>${l}</span></label>`).join("")}</div>
+  </div>`;
+}
+function quickWeigh() {
+  const st = wgStats(); const last = wgLive().slice(-1)[0]; const v = last ? last.kg : num(DB.settings.startKg) || 80;
+  sheet(`<h2 class="disp">Pesée du jour</h2><p class="mut">Le matin, à jeun, c'est le plus fiable.</p>
+    <div class="stepper"><button type="button" data-qw="-0.1" aria-label="Moins 100 g">−</button><output id="qw-v" data-v="${v}">${fmtKg(v)}</output><span>kg</span><button type="button" data-qw="0.1" aria-label="Plus 100 g">+</button></div>
+    <div class="qwchips">${[-1, -.5, .5, 1].map(d => `<button type="button" class="chip" data-qw="${d}">${d > 0 ? "+" : "−"}${fmtKg(Math.abs(d))}</button>`).join("")}</div>
+    ${st ? `<p class="mut" style="text-align:center;font-size:14px">Dernière pesée : ${fmtKg(last.kg)} kg, ${esc(fmtShort(last.date))}</p>` : ""}
+    <div class="btns"><button class="btn pri" data-act="qw-save">Enregistrer</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  const out = $("#qw-v"); let hold;
+  const bump = d => { const n = Math.round((+out.dataset.v + d) * 10) / 10; if (n < 30 || n > 250) return; out.dataset.v = n; out.textContent = fmtKg(n); buzz(4); };
+  for (const b of $$("[data-qw]")) {
+    b.onclick = () => bump(+b.dataset.qw);
+    if (Math.abs(+b.dataset.qw) < .2) { b.onpointerdown = () => { clearInterval(hold); let k = 0; hold = setInterval(() => { if (++k > 3) bump(+b.dataset.qw); }, 110); }; b.onpointerup = b.onpointerleave = b.onpointercancel = () => clearInterval(hold); }
+  }
+}
+
 /* ───────────── Navigation ───────────── */
 function navHTML(cur) {
   const has = !!DB.draft;
@@ -376,20 +656,27 @@ function vHome() {
   <section class="hero tonight">
     <h1>${evening ? "Ce soir" : "Aujourd'hui"},<br>séance ${s}</h1>
     <p>${esc(S.focus.replace(/ · /g, ", "))}. ${allEx.length} exercices, environ 55 minutes.</p>
-    ${lead ? `${plateRig(lead, leadKg, true)}
+    ${lead ? `<div class="rigbox" id="rigbox" data-ex="${lead.id}" data-kg="${leadKg}">${plateRig(lead, leadKg, true)}<canvas aria-hidden="true"></canvas><button type="button" class="rig-reset" hidden>Remettre en place</button></div>
+    <div class="righint">${gearKind(lead) === "plates" ? "Tire un disque avec le doigt, ou touche-le pour le faire sauter." : gearKind(lead) === "db" ? "Attrape un haltère et lance-le." : "Pousse la pile du doigt."}</div>
     <div class="rigcap"><div><b>${esc(lead.nom)}</b><small>${esc(gearLabel(lead, leadKg))}</small></div><div class="kg">${fmtKg(leadKg)}<span> kg</span></div></div>` : ""}
     <div class="homecta"><button class="btn pri" data-act="start" data-s="${s}">Commencer la séance</button><a class="btn sec" href="#/programme/${s}">Voir</a></div>
+    <div class="quick">
+      <label class="q">${I.camera}<span>Photo du repas</span><input type="file" accept="image/*" id="nu-photo" class="sr"></label>
+      <button type="button" class="q" data-act="qw-open">${I.scale || I.chart}<span>Pesée</span></button>
+      <button type="button" class="q" data-act="water" data-d="${isoDay()}" data-n="${waterOf(isoDay()) + 1}">${GLASS}<span>Eau${waterOf(isoDay()) ? ` · ${waterOf(isoDay())}` : ""}</span></button>
+    </div>
     ${others.length ? `<div class="alsolist"><h3>Aussi au programme</h3>${others.slice(0, 4).map(e => { const k = todayKg(e); return `<div><span>${esc(e.nom)}</span><em>${e.type === "time" ? repTxt(e) : k != null ? fmtKg(k) + " kg" : e.series + " × " + repTxt(e)}</em></div>`; }).join("")}${others.length > 4 ? `<div><span class="mut">Et ${others.length - 4} autre${others.length > 5 ? "s" : ""}</span></div>` : ""}</div>` : ""}
     <div class="other"><span class="mut">Envie d'autre chose ?</span>${ORDER.filter(k => k !== s).map(k => `<button class="chip" data-act="start" data-s="${k}">Séance ${k}</button>`).join("")}<button class="chip" data-act="start" data-s="L">Séance libre</button></div>
     <div class="forme"><h3>Ta forme du jour</h3><p>${fset ? ["Le coach garde tes charges aujourd'hui, sans monter.", "Le coach suit ton plan habituel.", "Le coach te propose de pousser un peu plus."][fv] : "Le coach ajuste les charges proposées selon ta réponse."}</p>
       <div class="seg" role="radiogroup" aria-label="Forme du jour">${["Fatigué", "Normal", "En forme"].map((l, i) => `<button type="button" role="radio" aria-checked="${fset && fv === i}" class="${fset && fv === i ? "on" : ""}" data-act="forme" data-v="${i}">${l}</button>`).join("")}</div></div>
   </section>
   ${(() => { const a = coachAlerts().filter(x => x.lvl === "warn"); return a.length ? `<a class="card pad homealert" href="#/coach"><div class="eyebrow">Coach · ${a.length} alerte${a.length > 1 ? "s" : ""}</div>${a.slice(0, 2).map(x => `<p><b>${esc(x.t)}</b> — ${esc(x.m.length > 110 ? x.m.slice(0, 108) + "…" : x.m)}</p>`).join("")}</a>` : ""; })()}
+  ${!notifCfg().on && !DB.settings.notifAsked ? `<div class="card pad nprompt"><div><b>Rappels</b><p>Trois messages par jour au plus : repas oublié, séance restée ouverte, record à portée.</p></div><div class="btns row"><a class="btn pri sm" href="#/reglages/rappels">Les activer</a><button class="btn ghost sm" data-act="notif-later">Plus tard</button></div></div>` : ""}
   ${weightCardHome()}
   <div class="sec-title"><h2 class="disp">Cette semaine</h2>${syncBadge()}</div>
   <div class="tiles">
-    <div class="tile"><b>${thisWeek.length}<span class="dim">/3</span></b><small>séances cette semaine</small></div>
-    <div class="tile"><b>${ws.length}</b><small>séances terminées au total</small></div>
+    <div class="tile"><b data-n="${thisWeek.length}">${thisWeek.length}<span class="dim">/3</span></b><small>séances cette semaine</small></div>
+    <div class="tile"><b data-n="${ws.length}">${ws.length}</b><small>séances terminées au total</small></div>
     <div class="tile"><b>${weekVol ? fmtVol(weekVol).replace(" ", "<small style='display:inline;font-size:14px'> ") + "</small>" : "0"}</b><small>volume soulevé</small></div>
   </div>
   <div class="sec-title"><h2 class="disp">Dernières perfs</h2>${last ? `<span class="mut" style="font-size:13px">${esc(fmtDay(last.date))}</span>` : ""}</div>
@@ -645,7 +932,7 @@ function startSession(s) {
       <button class="btn ghost" data-close>Annuler</button></div>`);
   }
   if (!DB.draft) { DB.draft = newWorkout(s); saveNow(); }
-  location.hash = "#/seance";
+  setLive(); location.hash = "#/seance";
 }
 
 function setRowHTML(e, w, i, prev) {
@@ -769,7 +1056,8 @@ function toggleSet(row) {
   if (err) { (s.reps === "" || Number.isNaN(num(s.reps)) ? rIn : kIn).classList.add("bad"); showErr(e.id, err); rowRefresh(row, e, { ...s, done: false }); return; }
   kIn.classList.remove("bad"); rIn.classList.remove("bad"); showErr(e.id, "");
   s.done = true; rowRefresh(row, e, s); touch(w); progRefresh(w);
-  if (navigator.vibrate) navigator.vibrate(15);
+  if (!calm()) { row.classList.remove("pop"); void row.offsetWidth; row.classList.add("pop"); }
+  buzz(15);
   if (route().name === "wk" && DB.settings.autoRest) startRest(e.repos, e.nom);
 }
 
@@ -792,7 +1080,7 @@ function finishOK() {
   w.status = "done"; w.finishedAt = new Date().toISOString(); w.rev = (w.rev || 0) + 1; markDirty(w);
   w.durationMin = Math.max(1, Math.round((Date.now() - new Date(w.startedAt)) / 60000));
   if (!DB.workouts.some(x => x.id === w.id)) DB.workouts.push(w);
-  DB.draft = null; saveNow(); closeSheet(); stopRest();
+  DB.draft = null; saveNow(); closeSheet(); stopRest(); setLive();
   const recs = workoutPRs(w);
   location.hash = "#/historique/" + w.id;
   setTimeout(() => recs.length ? recordSheet(w, recs) : toast("Séance enregistrée ✓"), 80);
@@ -818,6 +1106,7 @@ function recordSheet(w, recs) {
     <p style="color:var(--txt);font-size:16px">Ton record précédent : ${esc(v(r.prev))}, il y a ${weeks} semaine${weeks > 1 ? "s" : ""}.</p>
     ${recs.length > 1 ? `<ul class="reclist">${recs.slice(1).map(x => `<li><span>${esc(x.e.nom)}</span><b>${esc(x.e.type === "time" ? x.b.r + " s" : fmtKg(x.b.k) + " kg × " + x.b.r)}</b></li>`).join("")}</ul>` : ""}
     <div class="btns"><button class="btn pri" data-close>Bien joué, fermer</button></div>`);
+  plateRain(); buzz([30, 60, 30, 60, 80]);
 }
 
 /* ───────────── Historique ───────────── */
@@ -1008,7 +1297,7 @@ function metricPts(e, metric) {
 }
 function vProgress(q, metric) {
   const ws = live();
-  const head = `<header class="top"><div><div class="eyebrow">${ws.length ? "Depuis le " + esc(fmtShort(sorted().slice(-1)[0].date)) : "Tes statistiques"}</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("stats")}`;
+  const head = `<header class="top"><div><div class="eyebrow">${ws.length ? "Depuis le " + esc(fmtShort(sorted().slice(-1)[0].date)) : "Tes statistiques"}</div><h1 class="disp" style="margin-top:6px">Progrès</h1></div>${syncBadge(true)}</header>${progSeg("stats")}${ws.length ? monthRecap() : ""}`;
   if (!ws.length) return head + `<div class="card empty" style="margin-top:14px"><div class="disp">Pas encore de courbe</div>Termine ta première séance : tes indicateurs apparaîtront ici.</div>`;
   const wk = weeklyData(12), cur = wk[11], prev = wk[10];
   const d28 = startDay(new Date()); d28.setDate(d28.getDate() - 27);
@@ -1441,7 +1730,7 @@ function vNutri(d) {
     <button class="iconbtn" data-go="#/nutrition/${isoDay(next)}" ${day >= isoDay() ? "disabled style='opacity:.25'" : ""} aria-label="Jour suivant" style="transform:scaleX(-1)">${I.back}</button></div>
   <section class="hero kcal ${t.incomplete ? "skipday" : ""}">
     <div class="eyebrow">Calories${t.incomplete ? ' <span class="badge" style="color:var(--txt);border-color:var(--txt)">jour non compté</span>' : ""}</div>
-    <div class="kbig disp">${Math.round(t.kcal).toLocaleString("fr-FR")}<small>${T ? " / " + T.kcal.toLocaleString("fr-FR") : ""} kcal</small></div>
+    <div class="kbig disp"><span data-n="${Math.round(t.kcal)}">${Math.round(t.kcal).toLocaleString("fr-FR")}</span><small>${T ? " / " + T.kcal.toLocaleString("fr-FR") : ""} kcal</small></div>
     ${T ? `<div class="pbar pbar-lg"><i style="width:${Math.min(100, t.kcal / T.kcal * 100).toFixed(1)}%"></i></div><div class="focus" style="margin:8px 0 0">${t.kcal <= T.kcal ? `Reste <b>${Math.round(T.kcal - t.kcal)} kcal</b>` : `<b>${Math.round(t.kcal - T.kcal)} kcal</b> au-dessus de l'objectif`}</div>` : `<div class="focus" style="margin:6px 0 0">Renseigne ta taille et ton âge plus bas pour calculer tes objectifs.</div>`}
     <div style="margin-top:14px">${barRow("Protéines", t.p, T && T.p, "g")}${barRow("Glucides", t.c, T && T.c, "g")}${barRow("Lipides", t.f, T && T.f, "g")}</div>
   </section>
@@ -1455,7 +1744,9 @@ function vNutri(d) {
     <button class="addbtn" data-act="nu-scan">${I.barcode}<span>Code-barres</span></button>
     <button class="addbtn" data-act="nu-search">${I.search}<span>Rechercher</span></button>
     <button class="addbtn" data-act="nu-manual">${I.pen}<span>Saisie libre</span></button>
-  </div>`;
+  </div>
+  ${(() => { const U = usualMeals(); return U.length ? `<div class="usual"><h3>Tes habituels <small>un appui pour ajouter</small></h3><div class="uscroll">${U.map(x => `<button type="button" class="uchip" data-act="usual" data-id="${x.m.id}" data-slot="${x.slot}"><b>${esc(x.m.name.length > 34 ? x.m.name.slice(0, 32) + "…" : x.m.name)}</b><small>${Math.round(x.m.kcal || 0)} kcal · ${Math.round(x.m.p || 0)} g prot.</small></button>`).join("")}</div></div>` : ""; })()}
+  ${waterHTML(day)}`;
   for (const [k, lb] of SLOTS) {
     const ms = mealsOf(day).filter(m => (m.slot || "dej") === k);
     const sk = ms.reduce((a, m) => a + (+m.kcal || 0), 0);
@@ -1473,7 +1764,7 @@ function vNutri(d) {
   }
   // objectifs
   const N = DB.settings.nutri || {};
-  html += `<div class="sec-title"><h2 class="disp">Mes objectifs</h2></div><div class="card pad">
+  html += `<details class="goals" ${T ? "" : "open"}><summary><span class="disp">Mes objectifs</span><small>${T ? `${T.kcal.toLocaleString("fr-FR")} kcal, ${T.p} g de protéines` : "À renseigner"}</small></summary><div class="card pad">
     ${T && !T.manual ? `<p class="mut" style="font-size:13px;margin:0 0 12px">Calcul : métabolisme de base ${T.bmr} kcal × activité ${N.activity || 1.45} = ${T.tdee} kcal de dépense${T.def ? `, moins ${T.def} kcal pour perdre environ ${fmtKg(r1(T.def * 7 / 7700))} kg par semaine` : ""}. Protéines : ${T.p} g (environ 1,8 g par kg). Poids utilisé : ${fmtKg(r1(T.w))} kg.</p>` : ""}
     <div class="wform" style="grid-template-columns:repeat(3,1fr)">
       <div class="field"><label for="nu-h">Taille cm</label><input id="nu-h" inputmode="numeric" value="${esc(N.height || "")}" placeholder="178"></div>
@@ -1487,7 +1778,7 @@ function vNutri(d) {
     </div>
     <button class="btn sec block" data-act="nu-goal">Enregistrer mes objectifs</button>
     <p class="dim" style="font-size:12px;margin:10px 0 0">Repères généraux pour un adulte en bonne santé, pas un avis médical. Valeurs nutritionnelles : table Ciqual 2025 (Anses) et Open Food Facts. Les estimations par photo sont approximatives.</p>
-  </div>`;
+  </div></details>`;
   return html;
 }
 /* Idée de repas : de quoi combler les protéines restantes sans dépasser les calories du jour. */
@@ -1881,6 +2172,8 @@ function vSettings() {
       <label class="set-item" style="cursor:pointer"><span style="width:22px"></span><div><b>Minuteur de repos automatique</b><small>Se lance quand tu valides une série.</small></div>
         <input type="checkbox" id="autorest" ${DB.settings.autoRest ? "checked" : ""} style="width:24px;height:24px"></label>
     </div>
+    <div class="sec-title" id="rappels"><h2 class="disp">Rappels</h2></div>
+    ${notifPanel()}
     <div class="sec-title"><h2 class="disp">Synchronisation</h2>${syncBadge(true)}</div>
     ${syncPanel()}
     ${del.length ? `<div class="sec-title"><h2 class="disp">Corbeille</h2></div><div class="card" style="padding:4px 16px">${del.map(w => `<div class="pr"><span>${esc(sesOf(w.session).nom)} · ${esc(fmtShort(w.date))}</span><button class="chip" data-act="restore" data-id="${w.id}">Restaurer</button></div>`).join("")}</div>` : ""}
@@ -2107,6 +2400,10 @@ async function syncOnce(R, stats) {
       if (prof.extras && typeof prof.extras === "object") DB.settings.extras = prof.extras;
       if (prof.removed && typeof prof.removed === "object") DB.settings.removed = prof.removed;
       if (prof.nutri && typeof prof.nutri === "object") DB.settings.nutri = prof.nutri;
+      if (Array.isArray(prof.push)) DB.settings.push = prof.push;
+      if (prof.notif && typeof prof.notif === "object") DB.settings.notif = prof.notif;
+      if (prof.water && typeof prof.water === "object") DB.settings.water = prof.water;
+      if ("live" in prof && !DB.draft) DB.settings.live = prof.live || null;
       DB.settings.profileSyncedAt = prof.updated_at;
     }
     // 2) envoi (les résultats ne sont appliqués qu'une fois l'écriture confirmée)
@@ -2119,7 +2416,7 @@ async function syncOnce(R, stats) {
       }
     }
     let profRes = null;
-    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null, extras: DB.settings.extras || {}, removed: DB.settings.removed || {}, nutri: DB.settings.nutri || null }], "user_id");
+    if (DB.settings.profileDirty) profRes = await R.upsert("profil", [{ user_id: user.id, goal_kg: num(DB.settings.goalKg), start_kg: num(DB.settings.startKg) || null, extras: DB.settings.extras || {}, removed: DB.settings.removed || {}, nutri: DB.settings.nutri || null, ...(R.kind === "github" ? { push: DB.settings.push || [], notif: DB.settings.notif || null, water: DB.settings.water || {}, live: DB.draft ? { s: DB.draft.session, at: DB.draft.startedAt } : (DB.settings.live || null) } : {}) }], "user_id");
     if (R.commit) await R.commit();
     for (const [T, res, vers] of done) for (const r of res) { const rec = T.list().find(x => x.id === r.id); if (!rec) continue; rec.syncedAt = r.updated_at; if (rec._v === vers.get(r.id)) rec.dirty = false; stats.up++; }
     if (profRes) { DB.settings.profileDirty = false; if (profRes[0]) DB.settings.profileSyncedAt = profRes[0].updated_at; }
@@ -2236,6 +2533,7 @@ function tickRest() {
   const left = Math.ceil((rest.end - Date.now()) / 1000);
   if (left <= 0) { $("#restTm").textContent = "GO"; if (navigator.vibrate) navigator.vibrate([120, 80, 120]); clearInterval(rest.t); rest.t = setTimeout(stopRest, 2500); return; }
   $("#restTm").textContent = `${Math.floor(left / 60)}:${pad2(left % 60)}`;
+  const rb = $("#restBar"); if (rb) rb.style.transform = `scaleX(${Math.max(0, Math.min(1, (rest.end - Date.now()) / (rest.total * 1000)))})`;
 }
 function stopRest() { clearInterval(rest.t); clearTimeout(rest.t); $("#rest").classList.remove("on"); }
 $("#rest").addEventListener("click", ev => {
@@ -2272,11 +2570,11 @@ function route() {
   if (a === "poids") return { name: "poids", r: b };
   if (a === "coach") return { name: "coach" };
   if (a === "nutrition") return { name: "nutri", d: b };
-  if (a === "reglages") return { name: "set" };
+  if (a === "reglages") return { name: "set", sub: b };
   return { name: "404" };
 }
 function vNotFound() { return `<div class="empty"><div class="disp">Introuvable</div><a class="btn sec" href="#/">Retour à l'accueil</a></div>`; }
-let clockT;
+let clockT, enterT;
 function render(keepScroll) {
   const r = route(); if (keepScroll !== true) closeSheet(); const y = scrollY;
   const map = { home: vHome, prog: () => vProgramme(r.s), ex: () => vExercise(r.id), wk: vWorkout, hist: vHistory, hd: () => vHistDetail(r.id), edit: () => vEdit(r.id), prog2: () => vProgress(r.q, r.m), poids: () => vWeight(r.r), coach: vCoach, nutri: () => vNutri(r.d), set: vSettings };
@@ -2285,6 +2583,12 @@ function render(keepScroll) {
   alertCache = null;
   $("#nav").innerHTML = navHTML(navKey);
   document.body.classList.toggle("dark", r.name === "wk" && !!DB.draft);
+  document.body.dataset.tab = r.name === "wk" ? "wk" : r.name === "set" ? "home" : navKey;
+  if (keepScroll !== true) { view.classList.remove("enter"); void view.offsetWidth; view.classList.add("enter"); clearTimeout(enterT); enterT = setTimeout(() => view.classList.remove("enter"), 900); countUp(view); }
+  mountRig();
+  for (const x of $$("[data-nt]")) x.onchange = () => { const N = notifCfg(); N.times = [...N.times]; N.times[+x.dataset.nt] = x.value; N.times = [...new Set(N.times)].sort(); DB.settings.notif = N; profileTouch(); toast("Heures enregistrées ✓"); render(true); };
+  for (const x of $$("[data-nk]")) x.onchange = () => { const N = notifCfg(); N.kinds = { ...N.kinds, [x.dataset.nk]: x.checked }; DB.settings.notif = N; profileTouch(); };
+  if (r.name === "set" && r.sub === "rappels" && keepScroll !== true) setTimeout(() => { const n = $("#rappels"); if (n) n.scrollIntoView({ block: "start" }); }, 30);
   const tc = $('meta[name="theme-color"]'); if (tc) tc.content = r.name === "wk" && DB.draft ? "#23272B" : "#E3E5E2";
   if (r.name !== "edit" && DB.editBuf) { DB.editBuf = null; save(); }
   clearInterval(clockT);
@@ -2332,6 +2636,19 @@ function handleAct(ev) {
     case "note": { const nt = $(".nt", el.closest(".wex")); nt.hidden = false; $("textarea", nt).focus(); break; }
     case "cardiock": { w.cardio = w.cardio || {}; w.cardio.done = !w.cardio.done; touch(w); $("#wx-cardio").outerHTML = cardioHTML(w); break; }
     case "finish": finishSheet(); break;
+    case "water": { const d = el.dataset.d, n = +el.dataset.n; setWater(d, n); buzz(6); if (n === 8) toast("2 litres, objectif atteint ✓"); render(true); break; }
+    case "qw-open": quickWeigh(); break;
+    case "qw-save": { const v = +$("#qw-v").dataset.v, d = isoDay(); const ex = DB.weights.find(y => !y.deleted && y.date === d);
+      if (ex) { ex.kg = v; markDirty(ex); } else { const rec = { id: uid(), date: d, kg: v, waist: null }; markDirty(rec); DB.weights.push(rec); if (!DB.settings.startKg && wgLive().length === 1) { DB.settings.startKg = v; DB.settings.profileUpdatedAt = new Date().toISOString(); DB.settings.profileDirty = true; } }
+      saveNow(); scheduleSync(); closeSheet(); render(true); toast(`Pesée enregistrée : ${fmtKg(v)} kg ✓`); break; }
+    case "usual": { const m = DB.meals.find(x => x.id === el.dataset.id); if (!m) break; const day = route().d || isoDay(); const slot = day === isoDay() ? slotNow() : el.dataset.slot;
+      const n = addMeal({ date: day, slot, name: m.name, g: m.g, kcal: m.kcal, p: m.p, c: m.c, f: m.f, per100: m.per100, src: m.src === "photo" ? "habituel" : m.src, ref: m.ref, ing: m.ing }); saveNow(); scheduleSync(); buzz(8); render(true);
+      toast(`${m.name.length > 28 ? m.name.slice(0, 26) + "…" : m.name} ajouté (${SLOTS.find(x => x[0] === slot)[1].toLowerCase()})`, () => { n.deleted = true; markDirty(n); saveNow(); render(true); }); break; }
+    case "notif-on": notifEnable(); break;
+    case "notif-off": notifOff(); break;
+    case "notif-test": notifTest(); break;
+    case "notif-tone": { DB.settings.notif = { ...notifCfg(), tone: el.dataset.v }; profileTouch(); render(true); break; }
+    case "notif-later": DB.settings.notifAsked = true; saveNow(); render(true); toast("Tu les trouveras dans Réglages."); break;
     case "forme": { DB.settings.forme = { d: isoDay(), v: +el.dataset.v }; saveNow(); render(true); break; }
     case "checkall": {
       const w2 = DB.draft; let bad = 0;
@@ -2341,7 +2658,7 @@ function handleAct(ev) {
     case "finish-ok": finishOK(); break;
     case "discard": sheet(`<h2 class="disp">Abandonner ?</h2><p>Les séries saisies dans cette séance seront perdues. Ton historique n'est pas touché.</p>
       <div class="btns"><button class="btn pri" data-act="discard-ok">Oui, abandonner</button><button class="btn ghost" data-close>Non, continuer</button></div>`); break;
-    case "discard-ok": DB.draft = null; saveNow(); stopRest(); closeSheet(); location.hash = "#/"; break;
+    case "discard-ok": DB.draft = null; setLive(); saveNow(); stopRest(); closeSheet(); location.hash = "#/"; break;
     case "edit": DB.editBuf = null; location.hash = `#/historique/${el.dataset.id}/modifier`; break;
     case "edit-cancel": { const id = DB.editBuf && DB.editBuf.id; DB.editBuf = null; saveNow(); location.hash = id ? "#/historique/" + id : "#/historique"; break; }
     case "edit-save": editSave(); break;
